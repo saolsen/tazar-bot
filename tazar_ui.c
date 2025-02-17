@@ -21,6 +21,7 @@ typedef enum {
 } UIState;
 
 typedef enum {
+    DIFFICULTY_NONE,
     DIFFICULTY_EASY,
     DIFFICULTY_MEDIUM,
     DIFFICULTY_HARD,
@@ -33,9 +34,18 @@ int main(void) {
     InitWindow(1024, 768, "Tazar Bot");
     SetTargetFPS(60);
     SetExitKey(0); // disable "ESC" closing the app.
-    // ha
-    Game game;
-    game_init(&game, GAME_MODE_ATTRITION, MAP_HEX_FIELD_SMALL);
+
+    UIState ui_state = UI_STATE_CONFIGURING;
+
+    // Configuring State
+    int selected_game_mode = 0;
+    int selected_map = 0;
+
+    // Game State
+    Game *game = malloc(sizeof(Game));
+
+    int selected_difficulty = 0;
+    Difficulty difficulty = DIFFICULTY_NONE;
 
     while (!WindowShouldClose()) {
         int width = GetScreenWidth();
@@ -45,12 +55,42 @@ int main(void) {
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
+        if (ui_state == UI_STATE_CONFIGURING) {
+
+            GuiLabel((Rectangle){20, 20, 200, 20}, "Game Mode");
+            GuiDropdownBox((Rectangle){20, 40, 200, 20}, "Attrition", &selected_game_mode, 1);
+
+            GuiLabel((Rectangle){20, 90, 200, 20}, "Map");
+            GuiDropdownBox((Rectangle){20, 110, 200, 20}, "Hex Field Small", &selected_map, 1);
+
+//            GuiLabel((Rectangle){20, 100, 200, 20}, "Difficulty");
+//            GuiDropdownBox((Rectangle){20, 120, 200, 20}, "Easy;Medium;Hard", &selected_difficulty,
+//                           1);
+
+            if (GuiButton((Rectangle){20, 170, 200, 40}, "Start Game")) {
+                assert(selected_game_mode >= 0 && selected_game_mode < 1);
+                assert(selected_map >= 0 && selected_map < 1);
+                assert(selected_difficulty >= 0 && selected_difficulty < 3);
+
+                GameMode game_mode = (GameMode)(selected_game_mode + 1);
+                Map map = (Map)(selected_map + 1);
+
+                game_init(game, game_mode, map);
+                
+                ui_state = UI_STATE_WAITING_FOR_SELECTION;
+            };
+        } else if (ui_state == UI_STATE_WAITING_FOR_SELECTION) {
+            DrawText(TextFormat("render: %d %d", width / 2, height), width / 2, height / 2, 18, RED);
+            DrawText(TextFormat("screen: %d %d", width, height), width / 2, height / 2 + 20, 18, RED);
+        } else {
+            assert(0);
+        }
+
         // DrawRectangle(1, 1, width-2, height - 2, DARKGRAY);
         // DrawRectangleLines(20, 58, 240, screen_height - 78, GRAY);
         // DrawCircle(width/2, height/2, 10, RED);
 
-        DrawText(TextFormat("render: %d %d", width / 2, height), width / 2, height / 2, 18, RED);
-        DrawText(TextFormat("screen: %d %d", width, height), width / 2, height / 2 + 20, 18, RED);
+
 
         // DrawText(TextFormat("is fullscreen: %d", IsWindowFullscreen()), 10, 10, 16, RED);
         EndDrawing();

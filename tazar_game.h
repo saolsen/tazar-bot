@@ -109,8 +109,8 @@ typedef enum {
 
 typedef enum {
     GAME_MODE_NONE = 0,
-    GAME_MODE_TOURNAMENT,
     GAME_MODE_ATTRITION,
+    GAME_MODE_TOURNAMENT,
 } GameMode;
 
 typedef enum {
