@@ -5,6 +5,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __EMSCRIPTEN__
+# include <emscripten.h>
+
+double random_prob() {
+    float rand_f = emscripten_random();
+    return (double)rand_f;
+}
+
+u32 rand_in_range(u32 min, u32 max) {
+    float rand_f = emscripten_random();
+    return (u32)(rand_f * (float)(max - min)) + min;
+}
+
+#else
+
+double random_prob() {
+    return drand48();
+}
+
+u32 rand_in_range(u32 min, u32 max) {
+    return arc4random_uniform(max-min) + min;
+}
+
+#endif
+
+
+
 V2 v2_from_cpos(CPos cpos) {
     i32 x = 2 * cpos.q + cpos.r;
     i32 y = cpos.r;
@@ -729,11 +756,14 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
             break;
         }
         case VOLLEY_ROLL: {
-            u32 die_1 = arc4random_uniform(5) + 1;
-            u32 die_2 = arc4random_uniform(5) + 1;
+            u32 die_1 = rand_in_range(1, 6);
+            u32 die_2 = rand_in_range(1, 6);
             u32 roll = die_1 + die_2;
             volley_hits = roll < 7;
             break;
+        }
+        default: {
+            assert(0);
         }
         }
         if (volley_hits) {

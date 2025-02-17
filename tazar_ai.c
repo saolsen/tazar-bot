@@ -80,10 +80,10 @@ Command ai_select_command_heuristic(Game *game, Command *commands, size_t num_co
         fprintf(stderr, "Failed to allocate memory for weights\n");
         exit(1);
     }
-
+    //uh
     heuristic_policy(weights, game, commands, num_commands);
 
-    double r = drand48();
+    double r = random_prob();
     Command picked_command = commands[0];
     for (size_t i = 1; i < num_commands; i++) {
         r -= weights[i];

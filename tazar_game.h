@@ -8,6 +8,9 @@
 typedef uint32_t u32;
 typedef int32_t  i32;
 
+u32 rand_in_range(u32 min, u32 max);
+double random_prob();
+
 typedef struct {
     i32 x;
     i32 y;
