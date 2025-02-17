@@ -13,8 +13,8 @@ endif ()
 
 # ASAN
 if ((NOT CMAKE_SYSTEM_NAME STREQUAL "Windows") AND (CMAKE_C_COMPILER_ID STREQUAL "Clang") AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
-    #target_compile_options(compile-options INTERFACE -fsanitize=address -fno-omit-frame-pointer)
-    #target_link_options(compile-options INTERFACE -fsanitize=address)
+    target_compile_options(compile-options INTERFACE -fsanitize=address -fno-omit-frame-pointer)
+    target_link_options(compile-options INTERFACE -fsanitize=address)
 endif ()
 
 enable_testing()

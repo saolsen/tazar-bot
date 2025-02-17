@@ -310,7 +310,7 @@ typedef struct {
 static AllowedOrderKinds piece_allowed_order_kinds(Game *game, Piece *piece) {
     // Can't do anything with a piece that was already activated this turn.
     bool piece_already_used = false;
-    for (size_t i = 0; i < game->turn.activation_i; i++) {
+    for (i32 i = 0; i < game->turn.activation_i; i++) {
         if (game->turn.activations[i].piece_id == piece->id) {
             piece_already_used = true;
             break;
@@ -346,7 +346,7 @@ static AllowedOrderKinds piece_allowed_order_kinds(Game *game, Piece *piece) {
         piece_can_move = true;
         piece_can_action = true;
         // We can only do any not already done orders.
-        for (size_t i = 0; i < activation->order_i; i++) {
+        for (i32 i = 0; i < activation->order_i; i++) {
             if (activation->orders[i].kind == ORDER_MOVE) {
                 piece_can_move = false;
             } else if (activation->orders[i].kind == ORDER_VOLLEY ||
@@ -594,8 +594,7 @@ void game_valid_commands(CommandBuf *command_buf, Game *game) {
     }
 }
 
-static bool game_command_is_valid(Game *game, Player player, Command command,
-                                  VolleyResult volley_result) {
+static bool game_command_is_valid(Game *game, Player player, Command command) {
     if (command.kind == COMMAND_NONE) {
         return false;
     }
@@ -628,7 +627,7 @@ static bool game_command_is_valid(Game *game, Player player, Command command,
     return true;
 }
 
-void game_end_turn(Game *game, Player player, Command command, VolleyResult volley_result) {
+void game_end_turn(Game *game, Player player, Command command) {
     if (game->turn.activation_i >= 2) {
         // Turn is over.
         game->turn.player = game->turn.player == PLAYER_RED ? PLAYER_BLUE : PLAYER_RED;
@@ -675,13 +674,13 @@ void game_end_turn(Game *game, Player player, Command command, VolleyResult voll
 }
 
 void game_apply_command(Game *game, Player player, Command command, VolleyResult volley_result) {
-    if (!game_command_is_valid(game, player, command, volley_result)) {
+    if (!game_command_is_valid(game, player, command)) {
         return;
     }
 
     if (command.kind == COMMAND_END_TURN) {
         game->turn.activation_i = 2;
-        game_end_turn(game, player, command, volley_result);
+        game_end_turn(game, player, command);
         return;
     }
 
@@ -730,9 +729,9 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
             break;
         }
         case VOLLEY_ROLL: {
-            int die_1 = 1 + rand() / (RAND_MAX / (6 - 1 + 1) + 1);
-            int die_2 = 1 + rand() / (RAND_MAX / (6 - 1 + 1) + 1);
-            int roll = die_1 + die_2;
+            u32 die_1 = arc4random_uniform(5) + 1;
+            u32 die_2 = arc4random_uniform(5) + 1;
+            u32 roll = die_1 + die_2;
             volley_hits = roll < 7;
             break;
         }
@@ -744,15 +743,13 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
         break;
     }
     case COMMAND_MUSTER: {
-        order_kind = ORDER_MUSTER;
         // @todo: Implement muster.
+        // order_kind = ORDER_MUSTER;
         assert(false);
-        break;
     }
     case COMMAND_END_TURN: {
         // handled already.
         assert(false);
-        break;
     }
     }
 
@@ -776,6 +773,5 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
     *piece = new_piece;
     *target_piece = new_target_piece;
 
-    game_end_turn(game, player, command, volley_result);
+    game_end_turn(game, player, command);
 }
-// no shell

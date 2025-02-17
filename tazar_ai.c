@@ -6,11 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int rand_in_range(int min, int max) {
-    // todo: better random number generation
-    return min + rand() / (RAND_MAX / (max - min + 1) + 1);
-}
-
 // Heuristic versions of a policy and value which guide the non RL versions of the AI.
 // Returns a value in range of -46 to 46.
 double heuristic_value(Game *game, Player player) {
@@ -64,7 +59,7 @@ void heuristic_policy(double *weights, Game *game, Command *commands, size_t num
 
     double total_weight = 0.0;
 
-    for (int i = 0; i < num_commands; i++) {
+    for (size_t i = 0; i < num_commands; i++) {
         Game new_game = *game;
         game_apply_command(&new_game, new_game.turn.player, commands[i], VOLLEY_HIT);
         double new_value = heuristic_value(&new_game, game->turn.player);
@@ -74,19 +69,23 @@ void heuristic_policy(double *weights, Game *game, Command *commands, size_t num
         total_weight += weight;
     }
 
-    for (int i = 0; i < num_commands; i++) {
+    for (size_t i = 0; i < num_commands; i++) {
         weights[i] /= total_weight;
     }
 }
 
 Command ai_select_command_heuristic(Game *game, Command *commands, size_t num_commands) {
     double *weights = malloc((size_t)num_commands * sizeof(*weights));
+    if (weights == NULL) {
+        fprintf(stderr, "Failed to allocate memory for weights\n");
+        exit(1);
+    }
 
     heuristic_policy(weights, game, commands, num_commands);
 
-    double r = ((double)rand() / RAND_MAX);
+    double r = drand48();
     Command picked_command = commands[0];
-    for (int i = 1; i < num_commands; i++) {
+    for (size_t i = 1; i < num_commands; i++) {
         r -= weights[i];
         if (r <= 0) {
             picked_command = commands[i];
@@ -145,7 +144,6 @@ MCState ai_mc_state_init(Game *game, Command *commands, int num_commands) {
     int *passes = malloc((size_t)num_commands * sizeof(*passes));
 
     for (int i = 0; i < num_commands; i++) {
-
         scores[i] = 0;
         passes[i] = 0;
     }
@@ -291,7 +289,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
 
             if (nodes[node_i].kind == NODE_CHANCE) {
-                double r = (double)rand() / RAND_MAX;
+                double r = drand48();
                 double cumulative = 0.0;
                 uint32_t child_i = 0;
                 assert(nodes[node_i].num_children == 2);
@@ -351,7 +349,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             assert((uint32_t)new_commands_buf.count ==
                    nodes[node_i].num_children_to_expand + nodes[node_i].num_children);
             unexpanded_commands_len = 0;
-            for (int i = 0; i < new_commands_buf.count; i++) {
+            for (size_t i = 0; i < new_commands_buf.count; i++) {
                 bool found = false;
                 for (uint32_t j = 0; j < nodes[node_i].num_children; j++) {
                     uint32_t child_i = nodes[node_i].first_child_i + j;
@@ -367,7 +365,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
             assert(unexpanded_commands_len > 0);
             Command child_command = ai_select_command_heuristic(
-                &nodes[node_i].game, unexpanded_commands, (int)unexpanded_commands_len);
+                &nodes[node_i].game, unexpanded_commands, unexpanded_commands_len);
 
             uint32_t next_child_i = nodes[node_i].first_child_i + nodes[node_i].num_children;
             Game child_game = nodes[node_i].game;
@@ -376,14 +374,14 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 Game hit_game = child_game;
                 game_apply_command(&hit_game, hit_game.turn.player, child_command, VOLLEY_HIT);
                 game_valid_commands(&new_commands_buf, &hit_game);
-                int num_new_hit_commands = new_commands_buf.count;
+                size_t num_new_hit_commands = new_commands_buf.count;
 
                 uint32_t hit_child_i = (uint32_t)nodes_len;
 
                 Game miss_game = child_game;
                 game_apply_command(&miss_game, miss_game.turn.player, child_command, VOLLEY_MISS);
                 game_valid_commands(&new_commands_buf, &miss_game);
-                int num_new_miss_commands = new_commands_buf.count;
+                size_t num_new_miss_commands = new_commands_buf.count;
 
                 uint32_t miss_child_i = hit_child_i + 1;
 
@@ -432,7 +430,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             } else {
                 game_apply_command(&child_game, child_game.turn.player, child_command, VOLLEY_ROLL);
                 game_valid_commands(&new_commands_buf, &child_game);
-                int num_commands = new_commands_buf.count;
+                size_t num_commands = new_commands_buf.count;
 
                 nodes[next_child_i] = (Node){
                     .kind = child_game.status == STATUS_OVER ? NODE_OVER : NODE_DECISION,

@@ -1,13 +1,19 @@
 // A really basic implementation of Tazar and an AI player, so I have someone to play with.
 // https://kelleherbros.itch.io/tazar
-#include "raylib.h"
-#include "tazar_ai.h"
+
 #include "tazar_game.h"
+#include "tazar_ai.h"
+
+#include "raylib.h"
+#define RAYGUI_IMPLEMENTATION
+#include "raygui.h"
 
 #include <assert.h>
 #include <math.h>
+#include <time.h>
 
 typedef enum {
+    UI_STATE_CONFIGURING,
     UI_STATE_WAITING_FOR_SELECTION,
     UI_STATE_WAITING_FOR_COMMAND,
     UI_STATE_AI_TURN,
@@ -21,34 +27,32 @@ typedef enum {
 } Difficulty;
 
 int main(void) {
+    srand48(time(0));
+
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1024, 768, "Tazar Bot");
     SetTargetFPS(60);
     SetExitKey(0); // disable "ESC" closing the app.
-    //ha
+    // ha
     Game game;
     game_init(&game, GAME_MODE_ATTRITION, MAP_HEX_FIELD_SMALL);
 
-
     while (!WindowShouldClose()) {
-        int width = GetRenderWidth();
-        int height = GetRenderHeight();
-        int screen_width = GetScreenWidth();
-        int screen_height = GetScreenHeight();
-
+        int width = GetScreenWidth();
+        int height = GetScreenHeight();
 
         // Draw
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
-        DrawRectangle(1, 1, width-2, height - 2, DARKGRAY);
-        //DrawRectangleLines(20, 58, 240, screen_height - 78, GRAY);
-        //DrawCircle(width/2, height/2, 10, RED);
+        // DrawRectangle(1, 1, width-2, height - 2, DARKGRAY);
+        // DrawRectangleLines(20, 58, 240, screen_height - 78, GRAY);
+        // DrawCircle(width/2, height/2, 10, RED);
 
-        DrawText(TextFormat("render: %d %d", width, height), width/2, height/2, 18, RED);
-        DrawText(TextFormat("screen: %d %d", width, height), width/2, height/2 + 20, 18, RED);
+        DrawText(TextFormat("render: %d %d", width / 2, height), width / 2, height / 2, 18, RED);
+        DrawText(TextFormat("screen: %d %d", width, height), width / 2, height / 2 + 20, 18, RED);
 
-        //DrawText(TextFormat("is fullscreen: %d", IsWindowFullscreen()), 10, 10, 16, RED);
+        // DrawText(TextFormat("is fullscreen: %d", IsWindowFullscreen()), 10, 10, 16, RED);
         EndDrawing();
     }
     CloseWindow();
