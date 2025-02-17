@@ -778,3 +778,4 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
 
     game_end_turn(game, player, command, volley_result);
 }
+// no shell

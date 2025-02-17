@@ -21,10 +21,39 @@ typedef enum {
 } Difficulty;
 
 int main(void) {
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    InitWindow(1024, 768, "Tazar Bot");
+    SetTargetFPS(60);
+    SetExitKey(0); // disable "ESC" closing the app.
+    //ha
     Game game;
     game_init(&game, GAME_MODE_ATTRITION, MAP_HEX_FIELD_SMALL);
 
-#if 1
+
+    while (!WindowShouldClose()) {
+        int width = GetRenderWidth();
+        int height = GetRenderHeight();
+        int screen_width = GetScreenWidth();
+        int screen_height = GetScreenHeight();
+
+
+        // Draw
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+
+        DrawRectangle(1, 1, width-2, height - 2, DARKGRAY);
+        //DrawRectangleLines(20, 58, 240, screen_height - 78, GRAY);
+        //DrawCircle(width/2, height/2, 10, RED);
+
+        DrawText(TextFormat("render: %d %d", width, height), width/2, height/2, 18, RED);
+        DrawText(TextFormat("screen: %d %d", width, height), width/2, height/2 + 20, 18, RED);
+
+        //DrawText(TextFormat("is fullscreen: %d", IsWindowFullscreen()), 10, 10, 16, RED);
+        EndDrawing();
+    }
+    CloseWindow();
+
+#if 0
     const int screen_width = 1024;
     const int screen_height = 768;
 
@@ -44,7 +73,7 @@ int main(void) {
     float horizontal_offset = sqrtf(hex_radius * hex_radius - (hex_radius / 2) * (hex_radius / 2));
     float vertical_offset = hex_radius * 1.5f;
     V2 screen_center = {10, 4};
-#endif
+
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI | FLAG_VSYNC_HINT);
     InitWindow(1024, 768, "Tazar Bot");
@@ -488,5 +517,7 @@ int main(void) {
         EndDrawing();
     }
     CloseWindow();
+
+#endif
     return 0;
 }

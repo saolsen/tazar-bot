@@ -42,6 +42,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
+if (EMSCRIPTEN)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s USE_GLFW=3 -s ASSERTIONS=1 -s WASM=1 -s ASYNCIFY -s GL_ENABLE_GET_PROC_ADDRESS=1 -s ALLOW_MEMORY_GROWTH -s STACK_SIZE=131072 --shell-file=shell.html")
+    set(CMAKE_EXECUTABLE_SUFFIX ".html")
+    configure_file(shell.html shell.html COPYONLY)
+endif ()
+
 add_executable(tazar_ui tazar_game.c tazar_ai.c tazar_ui.c)
 target_link_libraries(tazar_ui PRIVATE compile-options raylib)
 
