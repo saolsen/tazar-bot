@@ -99,7 +99,6 @@ static Tile tile_null = TILE_NONE;
 static Piece piece_null = {
     .kind = PIECE_NONE,
     .player = PLAYER_NONE,
-    .pos = (CPos){0, 0, 0},
     .id = 0,
 };
 
@@ -130,7 +129,6 @@ void game_init(Game *game, GameMode game_mode, Map map) {
         game->pieces[i] = (Piece){
             .kind = PIECE_NONE,
             .player = PLAYER_NONE,
-            .pos = (CPos){0, 0, 0},
             .id = 0,
         };
     }

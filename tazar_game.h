@@ -71,7 +71,6 @@ typedef enum {
 typedef struct {
     PieceKind kind;
     Player player;
-    CPos pos;
     i32 id;
 } Piece;
 
