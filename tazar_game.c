@@ -358,13 +358,6 @@ static AllowedOrderKinds piece_allowed_order_kinds(Game *game, Piece *piece) {
         // New activation, can do either move or action.
         piece_can_move = true;
         piece_can_action = true;
-    } else if (activation->piece_id != 0) {
-        // Using this piece would end the current activation and start a new one.
-        // Can only do this if there are more activations left.
-        if (game->turn.activation_i + 1 >= 2) {
-            piece_can_move = false;
-            piece_can_action = false;
-        }
     } else if (activation->piece_id == piece->id) {
         // If piece_id is set we must have done something.
         assert(activation->order_i > 0);
@@ -379,6 +372,14 @@ static AllowedOrderKinds piece_allowed_order_kinds(Game *game, Piece *piece) {
                 piece_can_action = false;
             }
         }
+    } else if (activation->piece_id != 0) {
+        // Using this piece would end the current activation and start a new one.
+        // Can only do this if there are more activations left.
+        if (game->turn.activation_i + 1 >= 2) {
+            piece_can_move = false;
+            piece_can_action = false;
+        }
+
     } else {
         assert(false);
     }

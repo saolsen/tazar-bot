@@ -1,11 +1,6 @@
 // A really basic implementation of Tazar and an AI player, so I have someone to play with.
 // https://kelleherbros.itch.io/tazar
 
-// TODO: bug, can't move after volley.
-// TODO: bug, if you move and then could volley, piece gets unselected.
-// TODO: bug, this interacts with turn not ending too, sometimes piece stays
-//            selected but there's no actions to do, should be turn end.
-
 #include "tazar_game.h"
 #include "tazar_ai.h"
 
@@ -146,7 +141,7 @@ int main(void) {
                 DrawRectangleRec(progress_bar, BLUE);
                 DrawRectangleLines((int)progress_bar_bg.x, (int)progress_bar_bg.y,
                                    (int)progress_bar_bg.width, (int)progress_bar_bg.height, GRAY);
-                DrawText("AI THINKING...", control_center.x - 60, control_area.y + 80, 19, GRAY);
+                DrawText("AI THINKING...", (int)control_center.x - 60, (int)control_area.y + 80, 19, GRAY);
             }
 
             bool clicked_end_turn = false;
@@ -217,42 +212,70 @@ int main(void) {
                     selected_cpos = (CPos){0, 0, 0};
                 } else if (mouse_clicked && mouse_in_board) {
                     bool matched_command = false;
+                    Command command;
                     for (size_t i = 0; i < command_buf.count; i++) {
-                        Command command = command_buf.commands[i];
+                        command = command_buf.commands[i];
                         if (cpos_eq(command.piece_pos, selected_cpos) &&
                             cpos_eq(command.target_pos, mouse_cpos)) {
-                            game_apply_command(game, game->turn.player, command, VOLLEY_ROLL);
-                            game_valid_commands(&command_buf, game);
-                            assert(command_buf.count <= 1024);
                             matched_command = true;
                             break;
                         }
                     }
                     if (matched_command) {
-                        bool has_another_command = false;
-                        for (size_t i = 0; i < command_buf.count; i++) {
-                            Command command = command_buf.commands[i];
-                            if (cpos_eq(command.piece_pos, selected_cpos)) {
-                                has_another_command = true;
-                                break;
-                            }
+                        Piece selected_piece = *game_piece(game, selected_cpos);
+                        i32 selected_piece_id = selected_piece.id;
+                        assert(selected_piece_id != 0);
+
+                        // Apply the command.
+                        game_apply_command(game, game->turn.player, command, VOLLEY_ROLL);
+
+                        // See if the piece still exists.
+                        bool piece_still_exists = false;
+                        CPos new_piece_cpos = (CPos){0, 0, 0};
+                        if (game_piece(game, command.piece_pos)->id == selected_piece_id) {
+                            piece_still_exists = true;
+                            new_piece_cpos = command.piece_pos;
+                        } else if (game_piece(game, command.target_pos)->id == selected_piece_id) {
+                            piece_still_exists = true;
+                            new_piece_cpos = command.target_pos;
                         }
-                        if (!has_another_command) {
-                            ui_state = UI_STATE_WAITING_FOR_SELECTION;
-                            selected_cpos = (CPos){0, 0, 0};
-                        }
-                        // If there are no more commands for this player, end the turn.
+
+                        // Get the new commands.
+                        game_valid_commands(&command_buf, game);
+                        assert(command_buf.count <= 1024);
+
                         if (command_buf.count == 1) {
+                            // If there are no more commands for this player, end the turn.
                             assert(command_buf.commands[0].kind == COMMAND_END_TURN);
                             game_apply_command(game, game->turn.player,
-                                               ((Command){
+                                               (Command){
                                                    .kind = COMMAND_END_TURN,
                                                    .piece_pos = (CPos){0, 0, 0},
                                                    .target_pos = (CPos){0, 0, 0},
-                                               }),
+                                               },
                                                VOLLEY_ROLL);
                             game_valid_commands(&command_buf, game);
                             assert(command_buf.count <= 1024);
+                            ui_state = UI_STATE_WAITING_FOR_SELECTION;
+                            selected_cpos = (CPos){0, 0, 0};
+                        } else if (piece_still_exists) {
+                            // If there are more commands for this piece, select it.
+                            bool has_another_command = false;
+                            for (size_t i = 0; i < command_buf.count; i++) {
+                                Command next_command = command_buf.commands[i];
+                                if (cpos_eq(next_command.piece_pos, new_piece_cpos) && next_command.kind != COMMAND_END_TURN) {
+                                    has_another_command = true;
+                                    break;
+                                }
+                            }
+                            if (has_another_command) {
+                                ui_state = UI_STATE_WAITING_FOR_COMMAND;
+                                selected_cpos = new_piece_cpos;
+                            } else {
+                                ui_state = UI_STATE_WAITING_FOR_SELECTION;
+                                selected_cpos = (CPos){0, 0, 0};
+                            }
+                        } else {
                             ui_state = UI_STATE_WAITING_FOR_SELECTION;
                             selected_cpos = (CPos){0, 0, 0};
                         }
