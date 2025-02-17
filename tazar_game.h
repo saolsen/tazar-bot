@@ -5,7 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef int32_t i32;
+typedef uint32_t u32;
+typedef int32_t  i32;
+
+u32 rand_in_range(u32 min, u32 max);
+double random_prob();
 
 typedef struct {
     i32 x;
@@ -65,10 +69,10 @@ typedef enum {
 } Player;
 
 typedef struct {
-    PieceKind kind;
-    Player player;
     CPos pos;
+    PieceKind kind;
     i32 id;
+    Player player;
 } Piece;
 
 i32 piece_gold(PieceKind kind);
@@ -108,8 +112,8 @@ typedef enum {
 
 typedef enum {
     GAME_MODE_NONE = 0,
-    GAME_MODE_TOURNAMENT,
     GAME_MODE_ATTRITION,
+    GAME_MODE_TOURNAMENT,
 } GameMode;
 
 typedef enum {
@@ -124,11 +128,11 @@ typedef struct {
     // This is certainly a lot of empty space but a uniform representation
     // like this makes it easier to pass the same shape to the (future) nn.
     // @todo: This doesn't change. Should be a const pointer to board.
-    Tile board[4096];
+    Tile *board;
+    i32 board_count; // always 4096
 
-    // @todo: Store this in a hashmap or something.
-    //        This is so sparse it's not worth storing this way.
-    Piece pieces[4096];
+    Piece pieces[64];
+    i32 pieces_count;
 
     // The height and width of the board in double positions.
     // Used by the UI to know how large to draw the board.
@@ -151,9 +155,15 @@ typedef struct {
 
 bool game_eq(Game *a, Game *b);
 Tile *game_tile(Game *game, CPos pos);
-Piece *game_piece(Game *game, CPos pos);
 
+const Piece *game_piece_set(Game *game, CPos pos, Piece piece);
+const Piece *game_piece_get(Game *game, CPos pos);
+void game_piece_del(Game *game, CPos pos);
+
+Game *game_alloc();
+void game_free(Game *game);
 void game_init(Game *game, GameMode game_mode, Map map);
+void game_clone(Game *to, Game *from);
 
 typedef enum {
     COMMAND_NONE = 0,

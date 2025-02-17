@@ -4,6 +4,34 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+#ifdef __EMSCRIPTEN__
+# include <emscripten.h>
+
+double random_prob() {
+    float rand_f = emscripten_random();
+    return (double)rand_f;
+}
+
+u32 rand_in_range(u32 min, u32 max) {
+    float rand_f = emscripten_random();
+    return (u32)(rand_f * (float)(max - min)) + min;
+}
+
+#else
+
+double random_prob() {
+    return drand48();
+}
+
+u32 rand_in_range(u32 min, u32 max) {
+    return arc4random_uniform(max-min) + min;
+}
+
+#endif
+
+
 
 V2 v2_from_cpos(CPos cpos) {
     i32 x = 2 * cpos.q + cpos.r;
@@ -24,6 +52,13 @@ bool cpos_eq(CPos a, CPos b) {
 
 CPos cpos_add(CPos a, CPos b) {
     return (CPos){a.q + b.q, a.r + b.r, a.s + b.s};
+}
+
+u32 cpos_hash(CPos cpos, i32 range) {
+    const size_t prime1 = 73856093;
+    const size_t prime2 = 19349669;
+    const size_t prime3 = 83492791;
+    return (u32)((cpos.q * prime1) ^ (cpos.r * prime2) ^ (cpos.s * prime3)) % range;
 }
 
 bool game_eq(Game *a, Game *b) {
@@ -71,14 +106,19 @@ bool game_eq(Game *a, Game *b) {
 static Tile tile_null = TILE_NONE;
 static Piece piece_null = {
     .kind = PIECE_NONE,
-    .player = PLAYER_NONE,
     .pos = (CPos){0, 0, 0},
+    .player = PLAYER_NONE,
     .id = 0,
+};
+static Piece piece_deleted = {
+    .kind = PIECE_NONE,
+    .pos = (CPos){0, 0, 0},
+    .player = PLAYER_NONE,
+    .id = -1,
 };
 
 // The board is indexed by q and r
 // but offset so that 0,0 is in the center.
-
 Tile *game_tile(Game *game, CPos pos) {
     if (pos.q < -32 || pos.q > 31 || pos.r < -32 || pos.r > 31) {
         return &tile_null;
@@ -86,27 +126,95 @@ Tile *game_tile(Game *game, CPos pos) {
     return &game->board[(pos.r + 32) * 64 + (pos.q + 32)];
 }
 
-Piece *game_piece(Game *game, CPos pos) {
-    if (pos.q < -32 || pos.q > 31 || pos.r < -32 || pos.r > 31) {
-        return &piece_null;
+// id for never set pieces is 0.
+// id for deleted pieces is -1.
+
+const Piece *game_piece_set(Game *game, CPos pos, Piece piece) {
+    assert(game->pieces_count < 64);
+    assert(cpos_eq(piece.pos, pos) == true);
+    assert(piece.kind != PIECE_NONE);
+    assert(piece.id != 0);
+    assert(piece.id != -1);
+    u32 i = cpos_hash(pos, 64);
+    for (u32 probe_inc = 1; probe_inc < 64; probe_inc++) {
+        if (game->pieces[i].id == 0 ||
+            game->pieces[i].id == -1 ||
+            (game->pieces[i].id > 0 && cpos_eq(game->pieces[i].pos, pos))) {
+            // @todo: Not sure if this should be an error or not.
+            if (game->pieces[i].kind != PIECE_NONE && cpos_eq(game->pieces[i].pos, pos)) {
+                assert("key already exists!" && false);
+            }
+            break;
+        }
+        i = (i + probe_inc) % 64;
     }
-    return &game->pieces[(pos.r + 32) * 64 + (pos.q + 32)];
+    if (game->pieces[i].id <= 0) {
+        game->pieces_count++;
+    }
+    game->pieces[i] = piece;
+    return &game->pieces[i];
 }
 
+const Piece *game_piece_get(Game *game, CPos pos) {
+    assert(game->pieces_count < 64);
+    u32 i = cpos_hash(pos, 64);
+    for (u32 probe_inc = 1; probe_inc < 64; probe_inc++) {
+        if ((game->pieces[i].id > 0 && cpos_eq(game->pieces[i].pos, pos))) {
+            return &game->pieces[i];
+        } else if (game->pieces[i].id == 0) {
+            return &piece_null;
+        }
+        i = (i + probe_inc) % 64;
+    }
+    return &piece_null;
+}
+
+void game_piece_del(Game *game, CPos pos) {
+    assert(game->pieces_count < 64);
+    u32 i = cpos_hash(pos, 64);
+    for (u32 probe_inc = 1; probe_inc < 64; probe_inc++) {
+        if ((game->pieces[i].id > 0 && cpos_eq(game->pieces[i].pos, pos))) {
+            game->pieces[i] = piece_deleted;
+            game->pieces_count--;
+            break;
+        }
+        i = (i + probe_inc) % 64;
+    }
+}
+
+Game *game_alloc() {
+    Game *game = calloc(sizeof(*game), 1);
+    game->board = malloc(64 * 64 * sizeof(*game->board));
+    game->board_count = 64 * 64;
+    return game;
+}
+
+void game_free(Game *game) {
+    assert(game->board != NULL);
+    free(game->board);
+    free(game);
+}
+
+void game_clone(Game *to, Game *from) {
+    Tile *to_board = to->board;
+    memcpy(to, from, sizeof(Game));
+    to->board = to_board;
+    memcpy(to->board, from->board, 64 * 64 * sizeof(*to->board));
+}
+
+// Note: must have be created with game_alloc so it has board and pieces buffers.
 void game_init(Game *game, GameMode game_mode, Map map) {
     assert(game_mode == GAME_MODE_ATTRITION);
     assert(map == MAP_HEX_FIELD_SMALL);
 
-    // Clear out the board and pieces.
     for (i32 i = 0; i < 4096; i++) {
         game->board[i] = TILE_NONE;
-        game->pieces[i] = (Piece){
-            .kind = PIECE_NONE,
-            .player = PLAYER_NONE,
-            .pos = (CPos){0, 0, 0},
-            .id = 0,
-        };
     }
+
+    for (i32 i = 0; i < 64; i++) {
+        game->pieces[i] = piece_null;
+    }
+    game->pieces_count = 0;
 
     // @note: Hardcoded to "Hex Field Small".
     for (i32 q = -4; q <= 4; q++) {
@@ -124,105 +232,162 @@ void game_init(Game *game, GameMode game_mode, Map map) {
 
     // @note: Hardcoded to "attrition" on "Hex Field Small".
     i32 id = 1;
-    Piece red_crown = {
-        .kind = PIECE_CROWN,
-        .player = PLAYER_RED,
-    };
-    Piece red_pike = {
-        .kind = PIECE_PIKE,
-        .player = PLAYER_RED,
-    };
-    Piece red_horse = {
-        .kind = PIECE_HORSE,
-        .player = PLAYER_RED,
-    };
-    Piece red_bow = {
-        .kind = PIECE_BOW,
-        .player = PLAYER_RED,
-    };
     CPos p = (CPos){-4, 0, 4};
-    *game_piece(game, p) = red_crown;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT_UP);
-    *game_piece(game, p) = red_bow;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT_UP);
-    *game_piece(game, p) = red_horse;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT);
-    *game_piece(game, p) = red_pike;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_LEFT_DOWN);
-    *game_piece(game, p) = red_pike;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_LEFT_DOWN);
-    *game_piece(game, p) = red_bow;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT);
-    *game_piece(game, p) = red_pike;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_LEFT_DOWN);
-    *game_piece(game, p) = red_pike;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_LEFT);
-    *game_piece(game, p) = red_bow;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT_DOWN);
-    *game_piece(game, p) = red_horse;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT);
-    *game_piece(game, p) = red_pike;
-    game_piece(game, p)->id = id++;
-
-    Piece blue_crown = {
+    game_piece_set(game, p, (Piece){
         .kind = PIECE_CROWN,
-        .player = PLAYER_BLUE,
-    };
-    Piece blue_pike = {
-        .kind = PIECE_PIKE,
-        .player = PLAYER_BLUE,
-    };
-    Piece blue_horse = {
-        .kind = PIECE_HORSE,
-        .player = PLAYER_BLUE,
-    };
-    Piece blue_bow = {
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
+    p = cpos_add(p, CPOS_RIGHT_UP);
+    game_piece_set(game, p, (Piece){
         .kind = PIECE_BOW,
-        .player = PLAYER_BLUE,
-    };
-    p = (CPos){4, 0, -4};
-    *game_piece(game, p) = blue_crown;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_LEFT_UP);
-    *game_piece(game, p) = blue_bow;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_LEFT_UP);
-    *game_piece(game, p) = blue_horse;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_LEFT);
-    *game_piece(game, p) = blue_pike;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT_DOWN);
-    *game_piece(game, p) = blue_pike;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT_DOWN);
-    *game_piece(game, p) = blue_bow;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_LEFT);
-    *game_piece(game, p) = blue_pike;
-    game_piece(game, p)->id = id++;
-    p = cpos_add(p, CPOS_RIGHT_DOWN);
-    *game_piece(game, p) = blue_pike;
-    game_piece(game, p)->id = id++;
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
+    p = cpos_add(p, CPOS_RIGHT_UP);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_HORSE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
     p = cpos_add(p, CPOS_RIGHT);
-    *game_piece(game, p) = blue_bow;
-    game_piece(game, p)->id = id++;
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
     p = cpos_add(p, CPOS_LEFT_DOWN);
-    *game_piece(game, p) = blue_horse;
-    game_piece(game, p)->id = id++;
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
+    p = cpos_add(p, CPOS_LEFT_DOWN);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_BOW,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
+    p = cpos_add(p, CPOS_RIGHT);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
+    p = cpos_add(p, CPOS_LEFT_DOWN);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
     p = cpos_add(p, CPOS_LEFT);
-    *game_piece(game, p) = blue_pike;
-    game_piece(game, p)->id = id++;
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_BOW,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
+    p = cpos_add(p, CPOS_RIGHT_DOWN);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_HORSE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
+    p = cpos_add(p, CPOS_RIGHT);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_RED,
+    });
+
+
+    p = (CPos){4, 0, -4};
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_CROWN,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_LEFT_UP);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_BOW,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_LEFT_UP);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_HORSE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_LEFT);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_RIGHT_DOWN);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_RIGHT_DOWN);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_BOW,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_LEFT);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_RIGHT_DOWN);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_RIGHT);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_BOW,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_LEFT_DOWN);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_HORSE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
+    p = cpos_add(p, CPOS_LEFT);
+    game_piece_set(game, p, (Piece){
+        .kind = PIECE_PIKE,
+        .pos = p,
+        .id = id++,
+        .player = PLAYER_BLUE,
+    });
 
     game->dpos_width = 17;
     game->dpos_height = 9;
@@ -310,7 +475,7 @@ typedef struct {
 static AllowedOrderKinds piece_allowed_order_kinds(Game *game, Piece *piece) {
     // Can't do anything with a piece that was already activated this turn.
     bool piece_already_used = false;
-    for (size_t i = 0; i < game->turn.activation_i; i++) {
+    for (i32 i = 0; i < game->turn.activation_i; i++) {
         if (game->turn.activations[i].piece_id == piece->id) {
             piece_already_used = true;
             break;
@@ -333,20 +498,13 @@ static AllowedOrderKinds piece_allowed_order_kinds(Game *game, Piece *piece) {
         // New activation, can do either move or action.
         piece_can_move = true;
         piece_can_action = true;
-    } else if (activation->piece_id != 0) {
-        // Using this piece would end the current activation and start a new one.
-        // Can only do this if there are more activations left.
-        if (game->turn.activation_i + 1 >= 2) {
-            piece_can_move = false;
-            piece_can_action = false;
-        }
     } else if (activation->piece_id == piece->id) {
         // If piece_id is set we must have done something.
         assert(activation->order_i > 0);
         piece_can_move = true;
         piece_can_action = true;
         // We can only do any not already done orders.
-        for (size_t i = 0; i < activation->order_i; i++) {
+        for (i32 i = 0; i < activation->order_i; i++) {
             if (activation->orders[i].kind == ORDER_MOVE) {
                 piece_can_move = false;
             } else if (activation->orders[i].kind == ORDER_VOLLEY ||
@@ -354,6 +512,14 @@ static AllowedOrderKinds piece_allowed_order_kinds(Game *game, Piece *piece) {
                 piece_can_action = false;
             }
         }
+    } else if (activation->piece_id != 0) {
+        // Using this piece would end the current activation and start a new one.
+        // Can only do this if there are more activations left.
+        if (game->turn.activation_i + 1 >= 2) {
+            piece_can_move = false;
+            piece_can_action = false;
+        }
+
     } else {
         assert(false);
     }
@@ -379,7 +545,7 @@ typedef struct {
 static size_t volley_targets(CPosBuf *target_buf, Game *game, CPos from) {
     assert(target_buf->cap >= 18);
     size_t num_targets = 0;
-    Piece *piece = game_piece(game, from);
+    Piece *piece = game_piece_get(game, from);
 
     for (i32 r = -2; r <= 2; r++) {
         for (i32 q = -2; q <= 2; q++) {
@@ -395,7 +561,7 @@ static size_t volley_targets(CPosBuf *target_buf, Game *game, CPos from) {
                 }
 
                 CPos cpos = cpos_add(from, offset);
-                Piece *target_piece = game_piece(game, cpos);
+                Piece *target_piece = game_piece_get(game, cpos);
                 if (target_piece->player != PLAYER_NONE && target_piece->player != piece->player) {
                     assert(num_targets == target_buf->count);
                     assert(target_buf->count < target_buf->cap);
@@ -416,7 +582,7 @@ static size_t volley_targets(CPosBuf *target_buf, Game *game, CPos from) {
 static size_t move_targets(CPosBuf *targets_buf, Game *game, CPos from) {
     assert(targets_buf->cap >= 64);
 
-    Piece *piece = game_piece(game, from);
+    Piece *piece = game_piece_get(game, from);
     assert(piece->kind != PIECE_NONE);
 
     i32 movement = piece_movement(piece->kind);
@@ -442,7 +608,7 @@ static size_t move_targets(CPosBuf *targets_buf, Game *game, CPos from) {
             // Tile *tile = game_tile(game, current);
 
             // Don't continue moving through another piece.
-            Piece *current_piece = game_piece(game, current);
+            Piece *current_piece = game_piece_get(game, current);
             if (i > 0 && current_piece->kind != PIECE_NONE) {
                 continue;
             }
@@ -474,7 +640,7 @@ static size_t move_targets(CPosBuf *targets_buf, Game *game, CPos from) {
                     continue;
                 }
 
-                Piece *neighbor_piece = game_piece(game, neighbor);
+                Piece *neighbor_piece = game_piece_get(game, neighbor);
 
                 // Don't move into a tile with a piece of the same player.
                 if (neighbor_piece->player == piece->player) {
@@ -518,84 +684,75 @@ void game_valid_commands(CommandBuf *command_buf, Game *game) {
         };
     }
 
-    // Iterate through all the pieces on the board.
-    // @todo: Bound this search with dpos_width and dpos_height.
-    // @todo: Might be faster to collect the cpos in one pass and then
-    //        evaluate them.
-    for (i32 r = -32; r <= 31; r++) {
-        for (i32 q = -32; q <= 31; q++) {
-            for (i32 s = -32; s <= 31; s++) {
-                if (q + r + s != 0) {
-                    continue;
-                }
-                CPos cpos = {q, r, -q - r};
-                Piece *piece = game_piece(game, cpos);
+    for (u32 p = 0; p < 64; p++) {
+        Piece *piece = &(game->pieces[p]);
 
-                // Can't use another player's piece.
-                if (piece->player != game->turn.player) {
-                    continue;
-                }
+        // Can't use another player's piece.
+        if (piece->id == 0 || piece->id == -1) {
+            continue;
+        }
+        if (piece->player != game->turn.player) {
+            continue;
+        }
 
-                AllowedOrderKinds piece_order_kinds = piece_allowed_order_kinds(game, piece);
+        AllowedOrderKinds piece_order_kinds = piece_allowed_order_kinds(game, piece);
+        CPos cpos = piece->pos;
 
-                if (piece_order_kinds.piece_can_move) {
-                    CPos targets[64];
-                    CPosBuf targets_buf = {
-                        .targets = &(targets[0]),
-                        .count = 0,
-                        .cap = 64,
+        if (piece_order_kinds.piece_can_move) {
+            CPos targets[64];
+            CPosBuf targets_buf = {
+                .targets = &(targets[0]),
+                .count = 0,
+                .cap = 64,
+            };
+            size_t targets_count = move_targets(&targets_buf, game, cpos);
+            assert(targets_count <= 64);
+            assert(targets_count == targets_buf.count);
+            for (size_t i = 0; i < targets_count; i++) {
+                CPos target = targets[i];
+                if (command_buf->count < command_buf->cap) {
+                    command_buf->commands[command_buf->count++] = (Command){
+                        .kind = COMMAND_MOVE,
+                        .piece_pos = cpos,
+                        .target_pos = target,
+                        .muster_piece_kind = PIECE_NONE,
                     };
-                    size_t targets_count = move_targets(&targets_buf, game, cpos);
-                    assert(targets_count <= 64);
-                    assert(targets_count == targets_buf.count);
-                    for (size_t i = 0; i < targets_count; i++) {
-                        CPos target = targets[i];
-                        if (command_buf->count < command_buf->cap) {
-                            command_buf->commands[command_buf->count++] = (Command){
-                                .kind = COMMAND_MOVE,
-                                .piece_pos = cpos,
-                                .target_pos = target,
-                                .muster_piece_kind = PIECE_NONE,
-                            };
-                        }
-                    }
                 }
+            }
+        }
 
-                if (piece_order_kinds.piece_can_action) {
-                    if (piece->kind == PIECE_BOW) {
-                        CPos targets[18];
-                        CPosBuf targets_buf = {
-                            .targets = &(targets[0]),
-                            .count = 0,
-                            .cap = 18,
+        if (piece_order_kinds.piece_can_action) {
+            if (piece->kind == PIECE_BOW) {
+                CPos targets[18];
+                CPosBuf targets_buf = {
+                    .targets = &(targets[0]),
+                    .count = 0,
+                    .cap = 18,
+                };
+                size_t targets_count = volley_targets(&targets_buf, game, cpos);
+                assert(targets_count <= 18);
+                assert(targets_count == targets_buf.count);
+                for (size_t i = 0; i < targets_count; i++) {
+                    CPos target = targets[i];
+                    if (command_buf->count < command_buf->cap) {
+                        command_buf->commands[command_buf->count++] = (Command){
+                            .kind = COMMAND_VOLLEY,
+                            .piece_pos = cpos,
+                            .target_pos = target,
+                            .muster_piece_kind = PIECE_NONE,
                         };
-                        size_t targets_count = volley_targets(&targets_buf, game, cpos);
-                        assert(targets_count <= 18);
-                        assert(targets_count == targets_buf.count);
-                        for (size_t i = 0; i < targets_count; i++) {
-                            CPos target = targets[i];
-                            if (command_buf->count < command_buf->cap) {
-                                command_buf->commands[command_buf->count++] = (Command){
-                                    .kind = COMMAND_VOLLEY,
-                                    .piece_pos = cpos,
-                                    .target_pos = target,
-                                    .muster_piece_kind = PIECE_NONE,
-                                };
-                            }
-                        }
-                    } else if (piece->kind == PIECE_CROWN) {
-                        // @todo: Implement muster.
-                    } else {
-                        assert(false);
                     }
                 }
+            } else if (piece->kind == PIECE_CROWN) {
+                // @todo: Implement muster.
+            } else {
+                assert(false);
             }
         }
     }
 }
 
-static bool game_command_is_valid(Game *game, Player player, Command command,
-                                  VolleyResult volley_result) {
+static bool game_command_is_valid(Game *game, Player player, Command command) {
     if (command.kind == COMMAND_NONE) {
         return false;
     }
@@ -605,7 +762,7 @@ static bool game_command_is_valid(Game *game, Player player, Command command,
     assert(command.kind == COMMAND_MOVE || command.kind == COMMAND_VOLLEY ||
            command.kind == COMMAND_MUSTER);
 
-    Piece *piece = game_piece(game, command.piece_pos);
+    Piece *piece = game_piece_get(game, command.piece_pos);
     if (piece->player != player) {
         printf("Not your piece\n");
         return false;
@@ -628,7 +785,7 @@ static bool game_command_is_valid(Game *game, Player player, Command command,
     return true;
 }
 
-void game_end_turn(Game *game, Player player, Command command, VolleyResult volley_result) {
+void game_end_turn(Game *game, Player player, Command command) {
     if (game->turn.activation_i >= 2) {
         // Turn is over.
         game->turn.player = game->turn.player == PLAYER_RED ? PLAYER_BLUE : PLAYER_RED;
@@ -644,27 +801,20 @@ void game_end_turn(Game *game, Player player, Command command, VolleyResult voll
     }
 
     // Check for game over.
-    // @todo: This will also be much faster with better piece storage.
+    // @opt: If this is still slow, I can just watch for crown kills during update.
     int red_crowns = 0;
     int blue_crowns = 0;
-    for (i32 r = -32; r <= 31; r++) {
-        for (i32 q = -32; q <= 31; q++) {
-            for (i32 s = -32; s <= 31; s++) {
-                if (q + r + s != 0) {
-                    continue;
-                }
-                CPos cpos = {q, r, -q - r};
-                Piece *p = game_piece(game, cpos);
-                if (p->kind == PIECE_CROWN) {
-                    if (p->player == PLAYER_RED) {
-                        red_crowns++;
-                    } else if (p->player == PLAYER_BLUE) {
-                        blue_crowns++;
-                    }
-                }
+    for (u32 i = 0; i < 64; i++) {
+        Piece *p = &(game->pieces[i]);
+        if (p->kind == PIECE_CROWN) {
+            if (p->player == PLAYER_RED) {
+                red_crowns++;
+            } else if (p->player == PLAYER_BLUE) {
+                blue_crowns++;
             }
         }
     }
+
     if (red_crowns == 0) {
         game->status = STATUS_OVER;
         game->winner = PLAYER_BLUE;
@@ -675,18 +825,18 @@ void game_end_turn(Game *game, Player player, Command command, VolleyResult voll
 }
 
 void game_apply_command(Game *game, Player player, Command command, VolleyResult volley_result) {
-    if (!game_command_is_valid(game, player, command, volley_result)) {
+    if (!game_command_is_valid(game, player, command)) {
         return;
     }
 
     if (command.kind == COMMAND_END_TURN) {
         game->turn.activation_i = 2;
-        game_end_turn(game, player, command, volley_result);
+        game_end_turn(game, player, command);
         return;
     }
 
-    Piece *piece = game_piece(game, command.piece_pos);
-    Piece *target_piece = game_piece(game, command.target_pos);
+    Piece *piece = game_piece_get(game, command.piece_pos);
+    Piece *target_piece = game_piece_get(game, command.target_pos);
 
     bool increment_activation = false;
     i32 activation_piece_id = game->turn.activations[game->turn.activation_i].piece_id;
@@ -696,8 +846,14 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
 
     OrderKind order_kind = ORDER_NONE;
     i32 aquired_gold = 0;
-    Piece new_piece = *piece;
-    Piece new_target_piece = *target_piece;
+
+    CPos del_pieces[2];
+    u32 del_pieces_count = 0;
+
+    Piece move_pieces[2];
+    CPos move_from[2];
+    CPos move_to[2];
+    u32 move_pieces_count = 0;
 
     switch (command.kind) {
     case COMMAND_NONE: {
@@ -705,15 +861,21 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
     }
     case COMMAND_MOVE: {
         order_kind = ORDER_MOVE;
-        aquired_gold = piece_gold(target_piece->kind);
-        new_piece = (Piece){.kind = PIECE_NONE, .player = PLAYER_NONE, .id = 0};
+        if (target_piece->kind != PIECE_NONE) {
+            aquired_gold = piece_gold(target_piece->kind);
+            del_pieces[del_pieces_count++] = target_piece->pos;
+        }
 
         if (piece->kind == PIECE_HORSE &&
             piece_strength(target_piece->kind) >= piece_strength(piece->kind)) {
             // Horse charge, both die.
-            new_target_piece = (Piece){.kind = PIECE_NONE, .player = PLAYER_NONE, .id = 0};
+            del_pieces[del_pieces_count++] = piece->pos;
+
         } else {
-            new_target_piece = *piece;
+            move_pieces[move_pieces_count] = *piece;
+            move_from[move_pieces_count] = piece->pos;
+            move_to[move_pieces_count] = command.target_pos;
+            move_pieces_count++;
         }
         break;
     }
@@ -730,29 +892,30 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
             break;
         }
         case VOLLEY_ROLL: {
-            int die_1 = 1 + rand() / (RAND_MAX / (6 - 1 + 1) + 1);
-            int die_2 = 1 + rand() / (RAND_MAX / (6 - 1 + 1) + 1);
-            int roll = die_1 + die_2;
+            u32 die_1 = rand_in_range(1, 6);
+            u32 die_2 = rand_in_range(1, 6);
+            u32 roll = die_1 + die_2;
             volley_hits = roll < 7;
             break;
+        }
+        default: {
+            assert(0);
         }
         }
         if (volley_hits) {
             aquired_gold = piece_gold(target_piece->kind);
-            new_target_piece = (Piece){.kind = PIECE_NONE, .player = PLAYER_NONE, .id = 0};
+            del_pieces[del_pieces_count++] = target_piece->pos;
         }
         break;
     }
     case COMMAND_MUSTER: {
-        order_kind = ORDER_MUSTER;
         // @todo: Implement muster.
+        // order_kind = ORDER_MUSTER;
         assert(false);
-        break;
     }
     case COMMAND_END_TURN: {
         // handled already.
         assert(false);
-        break;
     }
     }
 
@@ -773,8 +936,15 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
     }
 
     game->gold[game->turn.player] += aquired_gold;
-    *piece = new_piece;
-    *target_piece = new_target_piece;
+    for (u32 i = 0; i < del_pieces_count; i++) {
+        game_piece_del(game, del_pieces[i]);
+    }
+    for (u32 i = 0; i < move_pieces_count; i++) {
+        Piece new_piece = move_pieces[i];
+        new_piece.pos = move_to[i];
+        game_piece_del(game, move_from[i]);
+        game_piece_set(game, move_to[i], new_piece);
+    }
 
-    game_end_turn(game, player, command, volley_result);
+    game_end_turn(game, player, command);
 }

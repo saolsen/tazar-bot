@@ -14,12 +14,10 @@ ColumnLimit: 100
 # Braces
 BreakBeforeBraces: Attach
 BraceWrapping:
-  AfterFunction: true     # Place a function’s opening brace on a new line.
+  AfterFunction: false
   AfterControlStatement: false
-  AfterNamespace: false
   AfterStruct: false
   AfterEnum: false
-  AfterClass: false
 
 # Pointers/references
 PointerAlignment: Right
@@ -30,5 +28,5 @@ SpaceAfterCStyleCast: false
 # Misc
 AlignTrailingComments: true
 AllowShortFunctionsOnASingleLine: Empty
-SortIncludes: true
+SortIncludes: "Never"
 IndentCaseLabels: false
