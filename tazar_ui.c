@@ -29,6 +29,7 @@ typedef enum {
 } Difficulty;
 
 int main(void) {
+    size_t s = sizeof(Piece);
     srand48(time(0));
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
@@ -222,7 +223,7 @@ int main(void) {
                         }
                     }
                     if (matched_command) {
-                        Piece selected_piece = *game_piece(game, selected_cpos);
+                        Piece selected_piece = *game_piece_get(game, selected_cpos);
                         i32 selected_piece_id = selected_piece.id;
                         assert(selected_piece_id != 0);
 
@@ -232,10 +233,10 @@ int main(void) {
                         // See if the piece still exists.
                         bool piece_still_exists = false;
                         CPos new_piece_cpos = (CPos){0, 0, 0};
-                        if (game_piece(game, command.piece_pos)->id == selected_piece_id) {
+                        if (game_piece_get(game, command.piece_pos)->id == selected_piece_id) {
                             piece_still_exists = true;
                             new_piece_cpos = command.piece_pos;
-                        } else if (game_piece(game, command.target_pos)->id == selected_piece_id) {
+                        } else if (game_piece_get(game, command.target_pos)->id == selected_piece_id) {
                             piece_still_exists = true;
                             new_piece_cpos = command.target_pos;
                         }
@@ -286,7 +287,7 @@ int main(void) {
                 }
             } else if (ui_state == UI_STATE_WAITING_FOR_SELECTION) {
                 if (mouse_clicked && mouse_in_board) {
-                    Piece selected_piece = *game_piece(game, mouse_cpos);
+                    Piece selected_piece = *game_piece_get(game, mouse_cpos);
                     if (selected_piece.player == game->turn.player) {
                         for (size_t i = 0; i < command_buf.count; i++) {
                             Command command = command_buf.commands[i];
@@ -414,7 +415,7 @@ int main(void) {
                     V2 dpos = {col - screen_center.x, row - screen_center.y};
                     CPos cpos = cpos_from_v2(dpos);
                     Tile tile = *game_tile(game, cpos);
-                    Piece piece = *game_piece(game, cpos);
+                    Piece piece = *game_piece_get(game, cpos);
                     if (tile == TILE_NONE) {
                         continue;
                     }
@@ -478,7 +479,7 @@ int main(void) {
             // Preview actions on hover.
             if (mouse_in_board && (ui_state == UI_STATE_WAITING_FOR_SELECTION || ui_state == UI_STATE_WAITING_FOR_COMMAND)) {
                 Tile hovered_tile = *game_tile(game, mouse_cpos);
-                Piece hovered_piece = *game_piece(game, mouse_cpos);
+                Piece hovered_piece = *game_piece_get(game, mouse_cpos);
                 if (!(ui_state == UI_STATE_WAITING_FOR_COMMAND && cpos_eq(mouse_cpos, selected_cpos))
                     && !(hovered_tile == TILE_NONE || hovered_piece.kind == PIECE_NONE)
                     && hovered_piece.player == game->turn.player) {

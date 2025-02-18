@@ -19,7 +19,7 @@ endif ()
 
 enable_testing()
 
-add_executable(tazar_test tazar_test.c)
+add_executable(tazar_test tazar_game.c tazar_test.c)
 target_link_libraries(tazar_test compile-options)
 add_test(NAME tazar_test COMMAND tazar_test)
 

@@ -18,18 +18,15 @@ double heuristic_value(Game *game, Player player) {
     int max_gold = 1 * 6 + 5 * 1 + 2 * 3 + 3 * 2;
 
     // Iterate over all positions on the board.
-    for (int r = -4; r <= 4; r++) {
-        for (int q = -4; q <= 4; q++) {
-            CPos cpos = {q, r, -q - r};
-            Piece *p = game_piece((Game *)game, cpos);
-            if (p->kind == PIECE_NONE) {
-                continue;
-            }
-            if (p->player == player) {
-                player_value += piece_gold(p->kind);
-            } else if (p->player == opponent) {
-                opponent_value += piece_gold(p->kind);
-            }
+    for (u32 i = 0; i < 64; i++) {
+        Piece *p = &(game->pieces[i]);
+        if (p->kind == PIECE_NONE) {
+            continue;
+        }
+        if (p->player == player) {
+            player_value += piece_gold(p->kind);
+        } else if (p->player == opponent) {
+            opponent_value += piece_gold(p->kind);
         }
     }
 

@@ -68,15 +68,11 @@ typedef enum {
     PLAYER_BLUE,
 } Player;
 
-// I think probably a hashmap of pieces is best. There aren't really that many of them are there?
-// I could still start with just an array too.
-// I guess it's really a pool, not an array.
-// Hash may CPos->Piece would be the most efficient.
-
 typedef struct {
+    CPos pos;
     PieceKind kind;
-    Player player;
     i32 id;
+    Player player;
 } Piece;
 
 i32 piece_gold(PieceKind kind);
@@ -135,10 +131,8 @@ typedef struct {
     Tile *board;
     i32 board_count; // always 4096
 
-    // @todo: Store this in a hashmap or something.
-    //        This is so sparse it's not worth storing this way.
-    Piece *pieces;
-    i32 pieces_count; // always 4096
+    Piece pieces[64];
+    i32 pieces_count;
 
     // The height and width of the board in double positions.
     // Used by the UI to know how large to draw the board.
@@ -161,7 +155,10 @@ typedef struct {
 
 bool game_eq(Game *a, Game *b);
 Tile *game_tile(Game *game, CPos pos);
-Piece *game_piece(Game *game, CPos pos);
+
+const Piece *game_piece_set(Game *game, CPos pos, Piece piece);
+const Piece *game_piece_get(Game *game, CPos pos);
+void game_piece_del(Game *game, CPos pos);
 
 Game *game_alloc();
 void game_free(Game *game);
