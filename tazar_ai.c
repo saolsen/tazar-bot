@@ -8,7 +8,7 @@
 
 // Heuristic versions of a policy and value which guide the non RL versions of the AI.
 // Returns a value in range of -46 to 46.
-double heuristic_value(Game *game, Player player) {
+double heuristic_value_old(Game *game, Player player) {
     Player opponent = (player == PLAYER_RED ? PLAYER_BLUE : PLAYER_RED);
     int player_gold = game->gold[player];
     int player_value = 0;
@@ -49,9 +49,80 @@ double heuristic_value(Game *game, Player player) {
     return eval;
 }
 
+// Trying a new eval function.
+// What is important? Having more pieces than the other player, and killing the other player's important pieces.
+// 5 pikes
+// 3 bows
+// 2 horses
+// 1 king
+
+// good to kill a piece with a move.
+// good to kill a piece with a bow.
+// sometimes good to kill a piece with a horse change, really just depends on how the game plays out.
+
+// should the score just be based on the number of pieces left?
+
+// 5(1) + 3(2) + 2(3) + 1(5) = 5 + 6 + 6 + 5 = 22
+// if you lost everyone, you would have 0.
+// if you have everyone, you would have 22.
+// but the value of a turn has to be based on how much better you're doing than the opponent I think.
+
+// so is it your units - their units?
+// game starts at 22-22 = 0
+// if you lose, you go right to -22
+// if you win, you go right to 22
+
+// do I want this to be always positive? Do I want to scale it 0-1?
+
+i32 piece_value(PieceKind kind) {
+    switch (kind) {
+    case PIECE_CROWN:
+        return 5;
+    case PIECE_HORSE:
+        return 3;
+    case PIECE_BOW:
+        return 2;
+    case PIECE_PIKE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+double heuristic_value(Game *game, Player player) {
+    Player opponent = (player == PLAYER_RED ? PLAYER_BLUE : PLAYER_RED);
+
+    if (game->status == STATUS_OVER) {
+        if (game->winner == player) {
+            return 22;
+        } else {
+            return -22;
+        }
+    }
+
+    i32 player_value = 0;
+    i32 opponent_value = 0;
+
+    // Iterate over all positions on the board.
+    for (u32 i = 0; i < 64; i++) {
+        Piece *p = &(game->pieces[i]);
+        if (p->kind == PIECE_NONE) {
+            continue;
+        }
+        if (p->player == player) {
+            player_value += piece_value(p->kind);
+        } else if (p->player == opponent) {
+            opponent_value += piece_value(p->kind);
+        }
+    }
+
+    double eval = player_value - opponent_value;
+    return eval;
+}
+
 // probability distribution over commands that could be chosen.
 void heuristic_policy(double *weights, Game *game, Command *commands, size_t num_commands) {
-    double temperature = 2;
+    double temperature = 0.1;
     double current_value = heuristic_value(game, game->turn.player);
 
     double total_weight = 0.0;
@@ -225,11 +296,14 @@ MCTSState ai_mcts_state_init(Game *game, Command *commands, int num_commands) {
     uintptr_t nodes_len = 0;
     uintptr_t nodes_cap = 0;
 
+    Game *root_game = game_alloc();
+    game_clone(root_game, game);
+
     push_node(&nodes, &nodes_len, &nodes_cap, zero_node);
     push_node(&nodes, &nodes_len, &nodes_cap,
               (Node){
                   .kind = NODE_DECISION,
-                  .game = *game,
+                  .game = root_game,
                   .command = (Command){0},
                   .parent_i = 0,
                   .first_child_i = 0,
@@ -253,6 +327,11 @@ MCTSState ai_mcts_state_init(Game *game, Command *commands, int num_commands) {
 
 void ai_mcts_state_cleanup(MCTSState *state) {
     if (state->nodes != NULL) {
+        for (size_t i=0; i < state->nodes_len; i++) {
+            if (state->nodes[i].game != NULL) {
+                game_free(state->nodes[i].game);
+            }
+        }
         free(state->nodes);
     }
 }
@@ -288,7 +367,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
 
             if (nodes[node_i].kind == NODE_CHANCE) {
-                double r = drand48();
+                double r = random_prob();
                 double cumulative = 0.0;
                 uint32_t child_i = 0;
                 assert(nodes[node_i].num_children == 2);
@@ -344,7 +423,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                        nodes[node_i].first_child_i + nodes[node_i].num_children_to_expand);
             }
 
-            game_valid_commands(&new_commands_buf, &nodes[node_i].game);
+            game_valid_commands(&new_commands_buf, nodes[node_i].game);
             assert((uint32_t)new_commands_buf.count ==
                    nodes[node_i].num_children_to_expand + nodes[node_i].num_children);
             unexpanded_commands_len = 0;
@@ -364,22 +443,27 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
             assert(unexpanded_commands_len > 0);
             Command child_command = ai_select_command_heuristic(
-                &nodes[node_i].game, unexpanded_commands, unexpanded_commands_len);
+                nodes[node_i].game, unexpanded_commands, unexpanded_commands_len);
 
             uint32_t next_child_i = nodes[node_i].first_child_i + nodes[node_i].num_children;
-            Game child_game = nodes[node_i].game;
+            Game *child_game = game_alloc();
+            game_clone(child_game,nodes[node_i].game);
 
             if (child_command.kind == COMMAND_VOLLEY) {
-                Game hit_game = child_game;
-                game_apply_command(&hit_game, hit_game.turn.player, child_command, VOLLEY_HIT);
-                game_valid_commands(&new_commands_buf, &hit_game);
+                Game *hit_game = game_alloc();
+                game_clone(hit_game, child_game);
+
+                game_apply_command(hit_game, hit_game->turn.player, child_command, VOLLEY_HIT);
+                game_valid_commands(&new_commands_buf, hit_game);
                 size_t num_new_hit_commands = new_commands_buf.count;
 
                 uint32_t hit_child_i = (uint32_t)nodes_len;
 
-                Game miss_game = child_game;
-                game_apply_command(&miss_game, miss_game.turn.player, child_command, VOLLEY_MISS);
-                game_valid_commands(&new_commands_buf, &miss_game);
+                Game *miss_game = game_alloc();
+                game_clone(miss_game, child_game);
+
+                game_apply_command(miss_game, miss_game->turn.player, child_command, VOLLEY_MISS);
+                game_valid_commands(&new_commands_buf, miss_game);
                 size_t num_new_miss_commands = new_commands_buf.count;
 
                 uint32_t miss_child_i = hit_child_i + 1;
@@ -427,18 +511,18 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                           });
                 nodes_to_simulate[1] = miss_child_i;
             } else {
-                game_apply_command(&child_game, child_game.turn.player, child_command, VOLLEY_ROLL);
-                game_valid_commands(&new_commands_buf, &child_game);
-                size_t num_commands = new_commands_buf.count;
+                game_apply_command(child_game, child_game->turn.player, child_command, VOLLEY_ROLL);
+                game_valid_commands(&new_commands_buf, child_game);
+                size_t num_new_commands = new_commands_buf.count;
 
                 nodes[next_child_i] = (Node){
-                    .kind = child_game.status == STATUS_OVER ? NODE_OVER : NODE_DECISION,
+                    .kind = child_game->status == STATUS_OVER ? NODE_OVER : NODE_DECISION,
                     .game = child_game,
                     .command = child_command,
                     .parent_i = node_i,
                     .first_child_i = 0,
                     .num_children = 0,
-                    .num_children_to_expand = (uint32_t)num_commands,
+                    .num_children_to_expand = (uint32_t)num_new_commands,
                     .visits = 0,
                     .total_reward = 0,
                     .probability = 1.0,
@@ -457,25 +541,32 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
 
             // Scored player is the player that will be scored at the end of the simulation.
-            Player scored_player = nodes[root_i].game.turn.player;
+            Player scored_player = nodes[root_i].game->turn.player;
             if (nodes[sim_i].parent_i != 0) {
-                scored_player = nodes[nodes[sim_i].parent_i].game.turn.player;
+                scored_player = nodes[nodes[sim_i].parent_i].game->turn.player;
             }
 
             // Simulation
             double score;
             if (nodes[sim_i].kind != NODE_OVER) {
-                Game sim_game = nodes[sim_i].game;
-                ai_rollout(&sim_game, (Command){0}, 300);
-                score = heuristic_value(&sim_game, scored_player);
+                Game *sim_game = game_alloc();
+                game_clone(sim_game,nodes[sim_i].game);
+                ai_rollout(sim_game, (Command){0}, 300);
+                score = heuristic_value(sim_game, scored_player);
+                game_free(sim_game);
             } else {
-                score = heuristic_value(&nodes[sim_i].game, scored_player);
+                score = heuristic_value(nodes[sim_i].game, scored_player);
             }
 
             // Backpropagation
             while (sim_i != 0) {
-                if ((sim_i == root_i && scored_player == game->turn.player) ||
-                    (nodes[nodes[sim_i].parent_i].game.turn.player == scored_player)) {
+                if (sim_i == root_i) {
+                    if (scored_player == game->turn.player) {
+                        nodes[sim_i].total_reward += score;
+                    } else {
+                        nodes[sim_i].total_reward -= score;
+                    }
+                } else if (nodes[nodes[sim_i].parent_i].game->turn.player == scored_player) {
                     nodes[sim_i].total_reward += score;
                 } else {
                     nodes[sim_i].total_reward -= score;

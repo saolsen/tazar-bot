@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.26)
 project(tazar_bot C)
 
 set(CMAKE_C_STANDARD 17)
@@ -43,7 +43,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(raylib)
 
 if (EMSCRIPTEN)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s USE_GLFW=3 -s ASSERTIONS=1 -s WASM=1 -s ASYNCIFY -s GL_ENABLE_GET_PROC_ADDRESS=1 -s ALLOW_MEMORY_GROWTH -s STACK_SIZE=131072 --shell-file=shell.html")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s USE_GLFW=3 -s ASSERTIONS=1 -s WASM=1 -s GL_ENABLE_GET_PROC_ADDRESS=1 -s ALLOW_MEMORY_GROWTH -s STACK_SIZE=131072 --shell-file=shell.html")
     set(CMAKE_EXECUTABLE_SUFFIX ".html")
     configure_file(shell.html shell.html COPYONLY)
 endif ()

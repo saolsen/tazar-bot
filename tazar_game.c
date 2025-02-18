@@ -137,18 +137,18 @@ const Piece *game_piece_set(Game *game, CPos pos, Piece piece) {
     assert(piece.id != -1);
     u32 i = cpos_hash(pos, 64);
     for (u32 probe_inc = 1; probe_inc < 64; probe_inc++) {
-        if (cpos_eq(game->pieces[i].pos, pos) || game->pieces[i].kind == PIECE_NONE) {
-
+        if (game->pieces[i].id == 0 ||
+            game->pieces[i].id == -1 ||
+            (game->pieces[i].id > 0 && cpos_eq(game->pieces[i].pos, pos))) {
             // @todo: Not sure if this should be an error or not.
-            if (cpos_eq(game->pieces[i].pos, pos)) {
+            if (game->pieces[i].kind != PIECE_NONE && cpos_eq(game->pieces[i].pos, pos)) {
                 assert("key already exists!" && false);
             }
-
             break;
         }
         i = (i + probe_inc) % 64;
     }
-    if (game->pieces[i].kind == PIECE_NONE) {
+    if (game->pieces[i].id <= 0) {
         game->pieces_count++;
     }
     game->pieces[i] = piece;
@@ -159,7 +159,7 @@ const Piece *game_piece_get(Game *game, CPos pos) {
     assert(game->pieces_count < 64);
     u32 i = cpos_hash(pos, 64);
     for (u32 probe_inc = 1; probe_inc < 64; probe_inc++) {
-        if (cpos_eq(game->pieces[i].pos, pos)) {
+        if ((game->pieces[i].id > 0 && cpos_eq(game->pieces[i].pos, pos))) {
             return &game->pieces[i];
         } else if (game->pieces[i].id == 0) {
             return &piece_null;
@@ -173,8 +173,9 @@ void game_piece_del(Game *game, CPos pos) {
     assert(game->pieces_count < 64);
     u32 i = cpos_hash(pos, 64);
     for (u32 probe_inc = 1; probe_inc < 64; probe_inc++) {
-        if (cpos_eq(game->pieces[i].pos, pos)) {
+        if ((game->pieces[i].id > 0 && cpos_eq(game->pieces[i].pos, pos))) {
             game->pieces[i] = piece_deleted;
+            game->pieces_count--;
             break;
         }
         i = (i + probe_inc) % 64;
@@ -683,77 +684,69 @@ void game_valid_commands(CommandBuf *command_buf, Game *game) {
         };
     }
 
-    // Iterate through all the pieces on the board.
-    // @todo: Bound this search with dpos_width and dpos_height.
-    // @todo: Might be faster to collect the cpos in one pass and then
-    //        evaluate them.
-    for (i32 r = -32; r <= 31; r++) {
-        for (i32 q = -32; q <= 31; q++) {
-            for (i32 s = -32; s <= 31; s++) {
-                if (q + r + s != 0) {
-                    continue;
-                }
-                CPos cpos = {q, r, -q - r};
-                Piece *piece = game_piece_get(game, cpos);
+    for (u32 p = 0; p < 64; p++) {
+        Piece *piece = &(game->pieces[p]);
 
-                // Can't use another player's piece.
-                if (piece->player != game->turn.player) {
-                    continue;
-                }
+        // Can't use another player's piece.
+        if (piece->id == 0 || piece->id == -1) {
+            continue;
+        }
+        if (piece->player != game->turn.player) {
+            continue;
+        }
 
-                AllowedOrderKinds piece_order_kinds = piece_allowed_order_kinds(game, piece);
+        AllowedOrderKinds piece_order_kinds = piece_allowed_order_kinds(game, piece);
+        CPos cpos = piece->pos;
 
-                if (piece_order_kinds.piece_can_move) {
-                    CPos targets[64];
-                    CPosBuf targets_buf = {
-                        .targets = &(targets[0]),
-                        .count = 0,
-                        .cap = 64,
+        if (piece_order_kinds.piece_can_move) {
+            CPos targets[64];
+            CPosBuf targets_buf = {
+                .targets = &(targets[0]),
+                .count = 0,
+                .cap = 64,
+            };
+            size_t targets_count = move_targets(&targets_buf, game, cpos);
+            assert(targets_count <= 64);
+            assert(targets_count == targets_buf.count);
+            for (size_t i = 0; i < targets_count; i++) {
+                CPos target = targets[i];
+                if (command_buf->count < command_buf->cap) {
+                    command_buf->commands[command_buf->count++] = (Command){
+                        .kind = COMMAND_MOVE,
+                        .piece_pos = cpos,
+                        .target_pos = target,
+                        .muster_piece_kind = PIECE_NONE,
                     };
-                    size_t targets_count = move_targets(&targets_buf, game, cpos);
-                    assert(targets_count <= 64);
-                    assert(targets_count == targets_buf.count);
-                    for (size_t i = 0; i < targets_count; i++) {
-                        CPos target = targets[i];
-                        if (command_buf->count < command_buf->cap) {
-                            command_buf->commands[command_buf->count++] = (Command){
-                                .kind = COMMAND_MOVE,
-                                .piece_pos = cpos,
-                                .target_pos = target,
-                                .muster_piece_kind = PIECE_NONE,
-                            };
-                        }
-                    }
                 }
+            }
+        }
 
-                if (piece_order_kinds.piece_can_action) {
-                    if (piece->kind == PIECE_BOW) {
-                        CPos targets[18];
-                        CPosBuf targets_buf = {
-                            .targets = &(targets[0]),
-                            .count = 0,
-                            .cap = 18,
+        if (piece_order_kinds.piece_can_action) {
+            if (piece->kind == PIECE_BOW) {
+                CPos targets[18];
+                CPosBuf targets_buf = {
+                    .targets = &(targets[0]),
+                    .count = 0,
+                    .cap = 18,
+                };
+                size_t targets_count = volley_targets(&targets_buf, game, cpos);
+                assert(targets_count <= 18);
+                assert(targets_count == targets_buf.count);
+                for (size_t i = 0; i < targets_count; i++) {
+                    CPos target = targets[i];
+                    if (command_buf->count < command_buf->cap) {
+                        command_buf->commands[command_buf->count++] = (Command){
+                            .kind = COMMAND_VOLLEY,
+                            .piece_pos = cpos,
+                            .target_pos = target,
+                            .muster_piece_kind = PIECE_NONE,
                         };
-                        size_t targets_count = volley_targets(&targets_buf, game, cpos);
-                        assert(targets_count <= 18);
-                        assert(targets_count == targets_buf.count);
-                        for (size_t i = 0; i < targets_count; i++) {
-                            CPos target = targets[i];
-                            if (command_buf->count < command_buf->cap) {
-                                command_buf->commands[command_buf->count++] = (Command){
-                                    .kind = COMMAND_VOLLEY,
-                                    .piece_pos = cpos,
-                                    .target_pos = target,
-                                    .muster_piece_kind = PIECE_NONE,
-                                };
-                            }
-                        }
-                    } else if (piece->kind == PIECE_CROWN) {
-                        // @todo: Implement muster.
-                    } else {
-                        assert(false);
                     }
                 }
+            } else if (piece->kind == PIECE_CROWN) {
+                // @todo: Implement muster.
+            } else {
+                assert(false);
             }
         }
     }
