@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifdef __EMSCRIPTEN__
 # include <emscripten.h>
@@ -119,6 +120,34 @@ Piece *game_piece(Game *game, CPos pos) {
     return &game->pieces[(pos.r + 32) * 64 + (pos.q + 32)];
 }
 
+Game *game_alloc() {
+    Game *game = calloc(sizeof(*game), 1);
+    game->board = malloc(64 * 64 * sizeof(*game->board));
+    game->board_count = 64 * 64;
+    game->pieces = malloc(64 * 64 * sizeof(*game->pieces));
+    game->pieces_count = 64 * 64;
+    return game;
+}
+
+void game_free(Game *game) {
+    assert(game->board != NULL);
+    assert(game->pieces != NULL);
+    free(game->board);
+    free(game->pieces);
+    free(game);
+}
+
+void game_clone(Game *to, Game *from) {
+    Tile *to_board = to->board;
+    Piece *to_pieces = to->pieces;
+    memcpy(to, from, sizeof(Game));
+    to->board = to_board;
+    memcpy(to->board, from->board, 64 * 64 * sizeof(*to->board));
+    to->pieces = to_pieces;
+    memcpy(to->pieces, from->pieces, 64 * 64 * sizeof(*to->pieces));
+}
+
+// Note: must have be created with game_alloc so it has board and pieces buffers.
 void game_init(Game *game, GameMode game_mode, Map map) {
     assert(game_mode == GAME_MODE_ATTRITION);
     assert(map == MAP_HEX_FIELD_SMALL);

@@ -59,15 +59,17 @@ void heuristic_policy(double *weights, Game *game, Command *commands, size_t num
 
     double total_weight = 0.0;
 
+    Game *new_game = game_alloc();
     for (size_t i = 0; i < num_commands; i++) {
-        Game new_game = *game;
-        game_apply_command(&new_game, new_game.turn.player, commands[i], VOLLEY_HIT);
-        double new_value = heuristic_value(&new_game, game->turn.player);
+        game_clone(new_game, game);
+        game_apply_command(new_game, new_game->turn.player, commands[i], VOLLEY_HIT);
+        double new_value = heuristic_value(new_game, game->turn.player);
         double delta = new_value - current_value;
         double weight = exp(delta / temperature);
         weights[i] = weight;
         total_weight += weight;
     }
+    game_free(new_game);
 
     for (size_t i = 0; i < num_commands; i++) {
         weights[i] /= total_weight;
@@ -80,7 +82,6 @@ Command ai_select_command_heuristic(Game *game, Command *commands, size_t num_co
         fprintf(stderr, "Failed to allocate memory for weights\n");
         exit(1);
     }
-    //uh
     heuristic_policy(weights, game, commands, num_commands);
 
     double r = random_prob();
@@ -102,7 +103,6 @@ double ai_rollout(Game *game, Command command, int depth) {
     Player scoring_player = game->turn.player;
     game_apply_command(game, game->turn.player, command, VOLLEY_ROLL);
 
-    // todo: Can I have these big arrays on the stack?
     Command *commands = malloc(1024 * sizeof(*commands));
     CommandBuf command_buf = {
         .commands = commands,
@@ -165,14 +165,16 @@ void ai_mc_think(MCState *state, Game *game, Command *commands, int num_commands
     double *scores = state->scores;
     int *passes = state->passes;
 
+    Game *rollout_game = game_alloc();
     for (int iteration = 0; iteration < iterations; iteration++) {
-        Game rollout_game = *game;
-        double score = ai_rollout(&rollout_game, commands[state->i], 299);
+        game_clone(rollout_game, game);
+        double score = ai_rollout(rollout_game, commands[state->i], 299);
         double adjusted_score = (score + 46) / (46 * 2);
         scores[state->i] += adjusted_score;
         passes[state->i] += 1;
         state->i = (state->i + 1) % num_commands;
     }
+    game_free(rollout_game);
 }
 
 Command ai_mc_select_command(MCState *state, Game *game, Command *commands, int num_commands) {
