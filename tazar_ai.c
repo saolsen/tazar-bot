@@ -367,7 +367,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
 
             if (nodes[node_i].kind == NODE_CHANCE) {
-                double r = drand48();
+                double r = random_prob();
                 double cumulative = 0.0;
                 uint32_t child_i = 0;
                 assert(nodes[node_i].num_children == 2);
