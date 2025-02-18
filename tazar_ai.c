@@ -8,7 +8,7 @@
 
 // Heuristic versions of a policy and value which guide the non RL versions of the AI.
 // Returns a value in range of -46 to 46.
-double heuristic_value(Game *game, Player player) {
+double heuristic_value_old(Game *game, Player player) {
     Player opponent = (player == PLAYER_RED ? PLAYER_BLUE : PLAYER_RED);
     int player_gold = game->gold[player];
     int player_value = 0;
@@ -49,9 +49,80 @@ double heuristic_value(Game *game, Player player) {
     return eval;
 }
 
+// Trying a new eval function.
+// What is important? Having more pieces than the other player, and killing the other player's important pieces.
+// 5 pikes
+// 3 bows
+// 2 horses
+// 1 king
+
+// good to kill a piece with a move.
+// good to kill a piece with a bow.
+// sometimes good to kill a piece with a horse change, really just depends on how the game plays out.
+
+// should the score just be based on the number of pieces left?
+
+// 5(1) + 3(2) + 2(3) + 1(5) = 5 + 6 + 6 + 5 = 22
+// if you lost everyone, you would have 0.
+// if you have everyone, you would have 22.
+// but the value of a turn has to be based on how much better you're doing than the opponent I think.
+
+// so is it your units - their units?
+// game starts at 22-22 = 0
+// if you lose, you go right to -22
+// if you win, you go right to 22
+
+// do I want this to be always positive? Do I want to scale it 0-1?
+
+i32 piece_value(PieceKind kind) {
+    switch (kind) {
+    case PIECE_CROWN:
+        return 5;
+    case PIECE_HORSE:
+        return 3;
+    case PIECE_BOW:
+        return 2;
+    case PIECE_PIKE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+double heuristic_value(Game *game, Player player) {
+    Player opponent = (player == PLAYER_RED ? PLAYER_BLUE : PLAYER_RED);
+
+    if (game->status == STATUS_OVER) {
+        if (game->winner == player) {
+            return 22;
+        } else {
+            return -22;
+        }
+    }
+
+    i32 player_value = 0;
+    i32 opponent_value = 0;
+
+    // Iterate over all positions on the board.
+    for (u32 i = 0; i < 64; i++) {
+        Piece *p = &(game->pieces[i]);
+        if (p->kind == PIECE_NONE) {
+            continue;
+        }
+        if (p->player == player) {
+            player_value += piece_value(p->kind);
+        } else if (p->player == opponent) {
+            opponent_value += piece_value(p->kind);
+        }
+    }
+
+    double eval = player_value - opponent_value;
+    return eval;
+}
+
 // probability distribution over commands that could be chosen.
 void heuristic_policy(double *weights, Game *game, Command *commands, size_t num_commands) {
-    double temperature = 2;
+    double temperature = 0.1;
     double current_value = heuristic_value(game, game->turn.player);
 
     double total_weight = 0.0;
