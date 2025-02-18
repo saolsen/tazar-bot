@@ -28,7 +28,7 @@ typedef enum {
 
 typedef struct {
     NodeKind kind;
-    Game game;
+    Game *game;
     Command command;
     uint32_t parent_i;
     uint32_t first_child_i;

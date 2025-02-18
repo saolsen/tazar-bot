@@ -225,11 +225,14 @@ MCTSState ai_mcts_state_init(Game *game, Command *commands, int num_commands) {
     uintptr_t nodes_len = 0;
     uintptr_t nodes_cap = 0;
 
+    Game *root_game = game_alloc();
+    game_clone(root_game, game);
+
     push_node(&nodes, &nodes_len, &nodes_cap, zero_node);
     push_node(&nodes, &nodes_len, &nodes_cap,
               (Node){
                   .kind = NODE_DECISION,
-                  .game = *game,
+                  .game = root_game,
                   .command = (Command){0},
                   .parent_i = 0,
                   .first_child_i = 0,
@@ -253,6 +256,11 @@ MCTSState ai_mcts_state_init(Game *game, Command *commands, int num_commands) {
 
 void ai_mcts_state_cleanup(MCTSState *state) {
     if (state->nodes != NULL) {
+        for (size_t i=0; i < state->nodes_len; i++) {
+            if (state->nodes[i].game != NULL) {
+                game_free(state->nodes[i].game);
+            }
+        }
         free(state->nodes);
     }
 }
@@ -344,7 +352,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                        nodes[node_i].first_child_i + nodes[node_i].num_children_to_expand);
             }
 
-            game_valid_commands(&new_commands_buf, &nodes[node_i].game);
+            game_valid_commands(&new_commands_buf, nodes[node_i].game);
             assert((uint32_t)new_commands_buf.count ==
                    nodes[node_i].num_children_to_expand + nodes[node_i].num_children);
             unexpanded_commands_len = 0;
@@ -364,22 +372,27 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
             assert(unexpanded_commands_len > 0);
             Command child_command = ai_select_command_heuristic(
-                &nodes[node_i].game, unexpanded_commands, unexpanded_commands_len);
+                nodes[node_i].game, unexpanded_commands, unexpanded_commands_len);
 
             uint32_t next_child_i = nodes[node_i].first_child_i + nodes[node_i].num_children;
-            Game child_game = nodes[node_i].game;
+            Game *child_game = game_alloc();
+            game_clone(child_game,nodes[node_i].game);
 
             if (child_command.kind == COMMAND_VOLLEY) {
-                Game hit_game = child_game;
-                game_apply_command(&hit_game, hit_game.turn.player, child_command, VOLLEY_HIT);
-                game_valid_commands(&new_commands_buf, &hit_game);
+                Game *hit_game = game_alloc();
+                game_clone(hit_game, child_game);
+
+                game_apply_command(hit_game, hit_game->turn.player, child_command, VOLLEY_HIT);
+                game_valid_commands(&new_commands_buf, hit_game);
                 size_t num_new_hit_commands = new_commands_buf.count;
 
                 uint32_t hit_child_i = (uint32_t)nodes_len;
 
-                Game miss_game = child_game;
-                game_apply_command(&miss_game, miss_game.turn.player, child_command, VOLLEY_MISS);
-                game_valid_commands(&new_commands_buf, &miss_game);
+                Game *miss_game = game_alloc();
+                game_clone(miss_game, child_game);
+
+                game_apply_command(miss_game, miss_game->turn.player, child_command, VOLLEY_MISS);
+                game_valid_commands(&new_commands_buf, miss_game);
                 size_t num_new_miss_commands = new_commands_buf.count;
 
                 uint32_t miss_child_i = hit_child_i + 1;
@@ -427,18 +440,18 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                           });
                 nodes_to_simulate[1] = miss_child_i;
             } else {
-                game_apply_command(&child_game, child_game.turn.player, child_command, VOLLEY_ROLL);
-                game_valid_commands(&new_commands_buf, &child_game);
-                size_t num_commands = new_commands_buf.count;
+                game_apply_command(child_game, child_game->turn.player, child_command, VOLLEY_ROLL);
+                game_valid_commands(&new_commands_buf, child_game);
+                size_t num_new_commands = new_commands_buf.count;
 
                 nodes[next_child_i] = (Node){
-                    .kind = child_game.status == STATUS_OVER ? NODE_OVER : NODE_DECISION,
+                    .kind = child_game->status == STATUS_OVER ? NODE_OVER : NODE_DECISION,
                     .game = child_game,
                     .command = child_command,
                     .parent_i = node_i,
                     .first_child_i = 0,
                     .num_children = 0,
-                    .num_children_to_expand = (uint32_t)num_commands,
+                    .num_children_to_expand = (uint32_t)num_new_commands,
                     .visits = 0,
                     .total_reward = 0,
                     .probability = 1.0,
@@ -457,25 +470,32 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
 
             // Scored player is the player that will be scored at the end of the simulation.
-            Player scored_player = nodes[root_i].game.turn.player;
+            Player scored_player = nodes[root_i].game->turn.player;
             if (nodes[sim_i].parent_i != 0) {
-                scored_player = nodes[nodes[sim_i].parent_i].game.turn.player;
+                scored_player = nodes[nodes[sim_i].parent_i].game->turn.player;
             }
 
             // Simulation
             double score;
             if (nodes[sim_i].kind != NODE_OVER) {
-                Game sim_game = nodes[sim_i].game;
-                ai_rollout(&sim_game, (Command){0}, 300);
-                score = heuristic_value(&sim_game, scored_player);
+                Game *sim_game = game_alloc();
+                game_clone(sim_game,nodes[sim_i].game);
+                ai_rollout(sim_game, (Command){0}, 300);
+                score = heuristic_value(sim_game, scored_player);
+                game_free(sim_game);
             } else {
-                score = heuristic_value(&nodes[sim_i].game, scored_player);
+                score = heuristic_value(nodes[sim_i].game, scored_player);
             }
 
             // Backpropagation
             while (sim_i != 0) {
-                if ((sim_i == root_i && scored_player == game->turn.player) ||
-                    (nodes[nodes[sim_i].parent_i].game.turn.player == scored_player)) {
+                if (sim_i == root_i) {
+                    if (scored_player == game->turn.player) {
+                        nodes[sim_i].total_reward += score;
+                    } else {
+                        nodes[sim_i].total_reward -= score;
+                    }
+                } else if (nodes[nodes[sim_i].parent_i].game->turn.player == scored_player) {
                     nodes[sim_i].total_reward += score;
                 } else {
                     nodes[sim_i].total_reward -= score;
