@@ -54,11 +54,11 @@ CPos cpos_add(CPos a, CPos b) {
     return (CPos){a.q + b.q, a.r + b.r, a.s + b.s};
 }
 
-u32 cpos_hash(CPos cpos, i32 range) {
+u32 cpos_hash(CPos cpos, u32 range) {
     const size_t prime1 = 73856093;
     const size_t prime2 = 19349669;
     const size_t prime3 = 83492791;
-    return (u32)((cpos.q * prime1) ^ (cpos.r * prime2) ^ (cpos.s * prime3)) % range;
+    return (u32)(((size_t)cpos.q * prime1) ^ ((size_t)cpos.r * prime2) ^ ((size_t)cpos.s * prime3)) % range;
 }
 
 bool game_eq(Game *a, Game *b) {
@@ -234,11 +234,11 @@ void game_init(Game *game, GameMode game_mode, Map map) {
     i32 id = 1;
     CPos p = (CPos){-4, 0, 4};
     game_piece_set(game, p, (Piece){
-        .kind = PIECE_CROWN,
-        .pos = p,
-        .id = id++,
-        .player = PLAYER_RED,
-    });
+                                .kind = PIECE_CROWN,
+                                .pos = p,
+                                .id = id++,
+                                .player = PLAYER_RED,
+                            });
     p = cpos_add(p, CPOS_RIGHT_UP);
     game_piece_set(game, p, (Piece){
         .kind = PIECE_BOW,
