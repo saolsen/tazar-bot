@@ -1,4 +1,5 @@
 #include "tazar_game.h"
+#include "tazar_ai.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -13,8 +14,8 @@ int main() {
     Game *game = game_alloc();
     assert(game != NULL);
     game_init(game, GAME_MODE_ATTRITION, MAP_HEX_FIELD_SMALL);
-    const Piece *piece = game_piece_get(game, (CPos){-4, 0, 4});
-    assert(piece->kind == PIECE_CROWN);
+
+    // Play some games ai vs ai so we have some seed data to train on.
 
     return 0;
 }

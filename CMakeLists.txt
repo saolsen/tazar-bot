@@ -23,7 +23,7 @@ add_executable(tazar_test tazar_game.c tazar_test.c)
 target_link_libraries(tazar_test compile-options)
 add_test(NAME tazar_test COMMAND tazar_test)
 
-add_executable(tazar_train tazar_train.c)
+add_executable(tazar_train tazar_game.c tazar_ai.c tazar_train.c)
 target_link_libraries(tazar_train compile-options)
 
 # RAYLIB

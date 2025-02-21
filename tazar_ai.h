@@ -30,6 +30,7 @@ typedef struct {
     NodeKind kind;
     Game *game;
     Command command;
+    Player command_player;
     uint32_t parent_i;
     uint32_t first_child_i;
     uint32_t num_children;
