@@ -48,6 +48,6 @@ if (EMSCRIPTEN)
     configure_file(shell.html shell.html COPYONLY)
 endif ()
 
-add_executable(tazar_ui tazar_game.c tazar_ai.c tazar_ui.c)
+add_executable(tazar_ui tazar_game.c tazar_ai.c tazar_ui.c tazar_ai_mcts.c)
 target_link_libraries(tazar_ui PRIVATE compile-options raylib)
 

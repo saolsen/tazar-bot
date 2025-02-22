@@ -3,6 +3,7 @@
 
 #include "tazar_game.h"
 #include "tazar_ai.h"
+#include "tazar_ai_mcts.h"
 
 #include "raylib.h"
 #define RAYGUI_IMPLEMENTATION
@@ -402,7 +403,7 @@ void ui_update_draw() {
                 break;
             }
             case DIFFICULTY_HARD: {
-                mcts_state = ai_mcts_state_init(game, command_buf.commands, (int)command_buf.count);
+                mcts_state = ai_mcts_state_init(&mcts_state, game, command_buf.commands, (int)command_buf.count);
                 ai_thinking_frames_left = 60 * 5;
                 break;
             }

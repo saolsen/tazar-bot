@@ -825,9 +825,14 @@ void game_end_turn(Game *game, Player player, Command command) {
 }
 
 void game_apply_command(Game *game, Player player, Command command, VolleyResult volley_result) {
-    if (!game_command_is_valid(game, player, command)) {
+    if (command.kind == COMMAND_NONE) {
         return;
     }
+
+    // todo: wanna probably skip this check during node selection. And maybe always.
+    // if (!game_command_is_valid(game, player, command)) {
+    //     return;
+    // }
 
     if (command.kind == COMMAND_END_TURN) {
         game->turn.activation_i = 2;

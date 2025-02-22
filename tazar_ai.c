@@ -263,6 +263,8 @@ Command ai_mc_select_command(MCState *state, Game *game, Command *commands, int 
     return result;
 }
 
+#if 0
+
 const Node zero_node;
 
 void push_node(Node **buf, uintptr_t *len, uintptr_t *cap, Node n) {
@@ -388,7 +390,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 nodes[node_i].num_children < allowed_children) {
                 // Expand a new child.
                 break;
-            }
+                }
 
             // Pick child with highest UCT.
             assert(nodes[node_i].num_children > 0);
@@ -611,3 +613,5 @@ Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, 
     Command result = nodes[best_child_i].command;
     return result;
 }
+
+#endif
