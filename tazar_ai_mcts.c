@@ -38,13 +38,14 @@ void nodes_graphviz(MCTSState *state) {
         exit(1);
     }
     fprintf(fp, "digraph unix {\n"
+    "  rankdir=LR;\n"
     "  node [color=lightblue2, style=filled];\n");
     for (i32 i=1; i<state->nodes_len-1; i++) {
         Node *node = state->nodes + i;
         if (node->parent_i != 0) {
             char *label = node->kind == NODE_DECISION ? "decision" : node->kind == NODE_OVER ? "over" : "chance";
             char *color = node->kind == NODE_CHANCE ? "lightgreen" : node->scored_player == PLAYER_RED ? "red" : "blue";
-            fprintf(fp, "%u [label= %s color=%s, style=filled]\n", i, label, color);
+            fprintf(fp, "%u [label= %f color=%s, style=filled]\n", i, node->total_reward/node->visits, color);
             fprintf(fp, "%u -> %u\n", node->parent_i, i);
         }
     }
@@ -79,9 +80,6 @@ double game_value_for_red(Game *game) {
 
     double result = score / max_score;
     assert(result > -1.0 && result < 1.0);
-    if (result != 0.0) {
-        printf("result: %f\n", result);
-    }
     return result;
 }
 
@@ -277,7 +275,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
 
     double c = sqrt(2);
     double dpw_k = 1.0; // 1
-    double dpw_alpha = 0.1; // 0.5, 0.25 looked good too
+    double dpw_alpha = 0.5; // 0.5, 0.25 looked good too
 
     for (int pass=0; pass < iterations; pass++) {
         u32 selected_node_i = root_i;
@@ -522,10 +520,6 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
 
             // backpropagation
             while (sim_i != 0) {
-                if (nodes[sim_i].kind == NODE_CHANCE) {
-                    //printf("change");
-                }
-
                 if (nodes[sim_i].scored_player == scored_player) {
                     nodes[sim_i].total_reward += score;
                 } else {
