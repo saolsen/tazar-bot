@@ -28,16 +28,151 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <tgmath.h>
+#include <unistd.h>
+
+void nodes_graphviz(MCTSState *state) {
+    // Write nodes to dot file.
+    FILE *fp = fopen("graph.dot", "w");
+    if (fp == NULL) {
+        printf("Error opening file!\n");
+        exit(1);
+    }
+    fprintf(fp, "digraph unix {\n"
+    "  node [color=lightblue2, style=filled];\n");
+    for (i32 i=1; i<state->nodes_len-1; i++) {
+        Node *node = state->nodes + i;
+        if (node->parent_i != 0) {
+            char *label = node->kind == NODE_DECISION ? "decision" : node->kind == NODE_OVER ? "over" : "chance";
+            char *color = node->kind == NODE_CHANCE ? "lightgreen" : node->scored_player == PLAYER_RED ? "red" : "blue";
+            fprintf(fp, "%u [label= %s color=%s, style=filled]\n", i, label, color);
+            fprintf(fp, "%u -> %u\n", node->parent_i, i);
+        }
+    }
+    fprintf(fp, "}\n");
+    fclose(fp);
+}
 
 double game_value_for_red(Game *game) {
+    double weights[5] = {
+        [PIECE_NONE] = exp(0.0),
+        [PIECE_CROWN] = exp(4.0),
+        [PIECE_PIKE] = exp(1.0),
+        [PIECE_HORSE] = exp(3.0),
+        [PIECE_BOW] = exp(2.0),
+    };
+
+    double max_score = weights[PIECE_CROWN] + 2 * weights[PIECE_HORSE] + 3 * weights[PIECE_BOW] + 5 * weights[PIECE_PIKE];
     double score = 0.0;
-    return score;
+
+    for (u32 i=0; i<64; i++) {
+        Piece *piece = game->pieces + i;
+        if (piece->kind == PIECE_NONE) {
+            continue;
+        }
+        double weight = weights[piece->kind];
+        if (piece->player == PLAYER_RED) {
+            score += weight;
+        } else {
+            score -= weight;
+        }
+    }
+
+    double result = score / max_score;
+    assert(result > -1.0 && result < 1.0);
+    if (result != 0.0) {
+        printf("result: %f\n", result);
+    }
+    return result;
 }
 
 // Select next command, used during node expansion and rollout.
 Command rollout_policy(Game *game, Command *commands, u32 num_commands) {
-    if (num_commands > 1) {
-        return commands[1];
+    assert(num_commands < 512);
+    double command_values[512];
+    double total_value = 0;
+
+    // Only really wanna end turn if there are no other commands.
+    if (num_commands == 1) {
+        return commands[0];
+    }
+
+    double weights[7] = {
+        exp(0), // end turn
+        exp(1), // move
+        exp(2), // horse_charge
+        exp(3), // kill bow
+        exp(4), // kill horse
+        exp(5), // volley
+        exp(6), // kill crown
+    };
+
+    for (u32 i=1; i<num_commands; i++) {
+        Command *command = commands + i;
+        switch (command->kind) {
+        case COMMAND_NONE: {
+            assert(0);
+            break;
+        }
+        case COMMAND_MOVE: {
+            const Piece *source_piece = game_piece_get(game, command->piece_pos);
+            assert(source_piece->kind != PIECE_NONE);
+            const Piece *target_piece = game_piece_get(game, command->target_pos);
+
+            if (target_piece->kind == PIECE_CROWN) {
+                command_values[i] = weights[6];
+                total_value += weights[6];
+            } else if (source_piece->kind == PIECE_HORSE) {
+                if (target_piece->kind == PIECE_PIKE || target_piece->kind == PIECE_HORSE) {
+                    command_values[i] = weights[2];
+                    total_value += weights[2];
+                } else if (target_piece->kind == PIECE_BOW) {
+                    command_values[i] = weights[3];
+                    total_value += weights[3];
+                } else {
+                    assert(target_piece->kind == PIECE_NONE);
+                    command_values[i] = weights[1];
+                    total_value += weights[1];
+                }
+            } else if (target_piece->kind == PIECE_HORSE) {
+                command_values[i] = weights[4];
+                total_value += weights[4];
+            } else if (target_piece->kind == PIECE_BOW) {
+                command_values[i] = weights[3];
+                total_value += weights[3];
+            } else if (target_piece->kind == PIECE_NONE) {
+                command_values[i] = weights[1];
+                total_value += weights[1];
+            } else {
+                assert(0);
+            }
+            break;
+        }
+        case COMMAND_VOLLEY: {
+            command_values[i] = weights[5];
+            total_value += weights[5];
+            break;
+        }
+        case COMMAND_MUSTER: {
+            assert(0);
+            break;
+        }
+        case COMMAND_END_TURN: {
+            assert(i == 0);
+            command_values[i] = weights[1];
+            total_value += weights[1];
+            break;
+        }
+        }
+    }
+
+    // Softmax to pick command.
+    double r = random_prob();
+    double cumulative = 0.0;
+    for (u32 i=0; i<num_commands; i++) {
+        cumulative += command_values[i] / total_value;
+        if (r <= cumulative) {
+            return commands[i];
+        }
     }
     return commands[0];
 }
@@ -141,8 +276,8 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
     };
 
     double c = sqrt(2);
-    double dpw_k = 1.0;
-    double dpw_alpha = 0.5;
+    double dpw_k = 1.0; // 1
+    double dpw_alpha = 0.1; // 0.5, 0.25 looked good too
 
     for (int pass=0; pass < iterations; pass++) {
         u32 selected_node_i = root_i;
@@ -214,6 +349,29 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             if (nodes[selected_node_i].first_child_i == 0) {
                 nodes[selected_node_i].first_child_i = (u32)nodes_len;
                 extend_nodes(&nodes, &nodes_len, &nodes_cap, nodes[selected_node_i].num_children_to_expand);
+
+                // debuging, set them to 0
+                for (u32 i = 0; i < nodes[selected_node_i].num_children_to_expand; i++) {
+                    nodes[nodes[selected_node_i].first_child_i + i] = (Node) {
+                        .kind = NODE_NONE,
+                        .parent_i = 0,
+                        .first_child_i = 0,
+                        .num_children = 0,
+                        .num_children_to_expand = 0,
+                        .visits = 0,
+                        .command = (Command){
+                            .kind = COMMAND_NONE,
+                            .piece_pos = (CPos){0, 0, 0},
+                            .target_pos = (CPos){0, 0, 0},
+                            .muster_piece_kind = PIECE_NONE,
+                        },
+                        .scored_player = PLAYER_NONE,
+                        .volley_result = VOLLEY_ROLL,
+                        .total_reward = 0.0,
+                        .probability = 0.0,
+                    };
+                }
+
                 assert(nodes_len == nodes[selected_node_i].first_child_i + nodes[selected_node_i].num_children_to_expand);
             }
 
@@ -345,7 +503,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                     && (depth-- > 0 || sim_game->turn.activation_i != 0)
                     ) {
                     game_valid_commands(&new_commands_buf, sim_game);
-                    Command next_command = rollout_policy(sim_game, unexpanded_commands_buf.commands, unexpanded_commands_buf.count);
+                    Command next_command = rollout_policy(sim_game, new_commands_buf.commands, new_commands_buf.count);
                     game_apply_command(sim_game, sim_game->turn.player, next_command, VOLLEY_ROLL);
                 }
             }
@@ -356,7 +514,6 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                     score = -1.0;
                 }
             } else {
-                // todo: use value function to estimate score.
                 score = game_value_for_red(sim_game);
                 if (scored_player == PLAYER_BLUE) {
                     score = -score;
@@ -365,6 +522,10 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
 
             // backpropagation
             while (sim_i != 0) {
+                if (nodes[sim_i].kind == NODE_CHANCE) {
+                    //printf("change");
+                }
+
                 if (nodes[sim_i].scored_player == scored_player) {
                     nodes[sim_i].total_reward += score;
                 } else {
@@ -373,7 +534,9 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 nodes[sim_i].visits++;
                 sim_i = nodes[sim_i].parent_i;
             }
+
         }
+
     }
 
     free(new_commands);
@@ -382,6 +545,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
     state->nodes = nodes;
     state->nodes_len = nodes_len;
     state->nodes_cap = nodes_cap;
+    nodes_graphviz(state);
 }
 
 Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, int num_commands) {
@@ -392,8 +556,8 @@ Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, 
     u32 best_child_i = 0;
 
     assert(nodes[root_i].num_children > 0);
-    assert(nodes[root_i].num_children == (uint32_t)num_commands);
-    assert(nodes[root_i].num_children_to_expand == 0);
+    //assert(nodes[root_i].num_children == (uint32_t)num_commands);
+    //assert(nodes[root_i].num_children_to_expand == 0);
     for (u32 i = 0; i < nodes[root_i].num_children; i++) {
         u32 child_i = nodes[root_i].first_child_i + i;
         if (nodes[child_i].visits >= most_visits) {
