@@ -335,8 +335,7 @@ void ui_update_draw() {
             if (ai_thinking_frames_left <= 0) {
                 switch (difficulty) {
                 case DIFFICULTY_EASY: {
-                    chosen_ai_command =
-                        ai_select_command_heuristic(game, command_buf.commands, command_buf.count);
+                    chosen_ai_command = expecti_max_policy(game, command_buf.commands, command_buf.count);
                     break;
                 }
                 case DIFFICULTY_MEDIUM: {

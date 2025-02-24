@@ -36,4 +36,6 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                    int iterations);
 Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, int num_commands);
 
+Command expecti_max_policy(Game *game, Command *commands, u32 num_commands);
+
 #endif

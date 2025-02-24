@@ -85,6 +85,7 @@
 #include <stdio.h>
 #include <tgmath.h>
 #include <unistd.h>
+#include <string.h>
 
 void nodes_graphviz(MCTSState *state) {
     // Write nodes to dot file.
@@ -109,6 +110,14 @@ void nodes_graphviz(MCTSState *state) {
 }
 
 double game_value_for_red(Game *game) {
+    if (game->status == STATUS_OVER) {
+        if (game->winner == PLAYER_RED) {
+            return 1.0;
+        } else {
+            return -1.0;
+        }
+    }
+
     double weights[5] = {
         [PIECE_NONE] = exp(0.0),
         [PIECE_CROWN] = exp(4.0),
@@ -136,6 +145,92 @@ double game_value_for_red(Game *game) {
     double result = score / max_score;
     assert(result > -1.0 && result < 1.0);
     return result;
+}
+
+// better ideas for easy-medium-hard
+// easy would sort actions via the rollout policy below, just pick the heighest weight one.
+// medium would just do a single expectimax to pick a command, so it's "looking" 4 moves ahead.
+// hard uses the expectimax for rollouts and uses mcts to explore the tree.
+
+// we probably also want to return what the expected value of each command because that will be
+// the starting value for node_expansion.
+// or, we undo the full expansion and go back to double progressive widening, each time
+// using this policy to pick the best next command. That would probably work really well.
+// it's basically equivalent, except that each command gets a rollout instead of just a minimax
+// estimate to start with. It does make the mcts tree a lot smaller though, and I can maybe
+// stop fully expanding and just allocate the nodes as I go. Doubtful I wanna do that though
+// because it's good to have all children together for cache reasons.
+
+// Use minimax (expectimax because chance nodes) to select the best command.
+// Does a 4 deep search to pick the command that maximizes the value of the game.
+// If I'm gonna do a-b pruning I probably want to sort by the old policy below.
+// That's good for mcts too because it'll pick "better" commands for ones that have equal value.
+// todo: make sure ucb uses > not >= if I do that.
+typedef struct {
+    u32 best_command_i;
+    double command_values[512];
+} ExpectiMaxResult;
+
+double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
+    if (result != NULL) {
+        result->best_command_i = 0;
+        memset(result->command_values, 0, sizeof(result->command_values));
+    }
+
+    if (depth == 0) {
+        return game_value_for_red(&game);
+    }
+
+    Command commands[512];
+    CommandBuf command_buf = {
+        .commands = commands,
+        .count = 0,
+        .cap = 512,
+    };
+    game_valid_commands(&command_buf, &game);
+
+    bool min_node = game.turn.player == PLAYER_BLUE;
+    double best_value = min_node ? INFINITY : -INFINITY;
+
+    for (u32 i=0; i < command_buf.count; i++) {
+        Command command = commands[i];
+        double value;
+        if (command.kind == COMMAND_VOLLEY) {
+            // chance node.
+            Game hit_game = game;
+            game_apply_command(&hit_game, hit_game.turn.player, commands[i], VOLLEY_HIT);
+            double hit_value = expecti_max_node(NULL, hit_game, depth - 1);
+            Game miss_game = game;
+            game_apply_command(&miss_game, miss_game.turn.player, commands[i], VOLLEY_MISS);
+            double miss_value = expecti_max_node(NULL, miss_game, depth - 1);
+            value = 0.4167 * hit_value + (1.0 - 0.4167) * miss_value;
+        } else {
+            Game new_game = game;
+            game_apply_command(&new_game, new_game.turn.player, commands[i], VOLLEY_ROLL);
+            value = expecti_max_node(NULL, new_game, depth - 1);
+        }
+
+        if (result != NULL) {
+            result->command_values[i] = value;
+        }
+
+        if ((min_node && value < best_value) || (!min_node && value > best_value)) {
+            best_value = value;
+            if (result != NULL) {
+                result->best_command_i = i;
+            }
+        }
+    }
+    return best_value;
+}
+
+Command expecti_max_policy(Game *game, Command *commands, u32 num_commands) {
+    assert(num_commands < 512);
+
+    ExpectiMaxResult result = {0};
+    expecti_max_node(&result, *game, 3);
+
+    return commands[result.best_command_i];
 }
 
 // Select next command, used during node expansion and rollout.
@@ -628,3 +723,4 @@ Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, 
 
     return nodes[best_child_i].command;
 }
+
