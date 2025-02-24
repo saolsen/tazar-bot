@@ -74,7 +74,9 @@
 // I'm only going like 3 steps and using 300 step rollout randomness. I gotta go like at least 100 into the depth
 // for this to really make any sense don't I?
 
-
+// tuning uct for more depth, is that a good idea?
+// replacing rollouts with a short minimax of like 2 turns, is that a good idea?
+// * that could be good, because it'd ensure that we don't miss obvious endgames.
 
 #include "tazar_ai_mcts.h"
 
@@ -313,7 +315,7 @@ double ai_mcts_rollout(Game *sim_game, CommandBuf *new_commands_buf, Player scor
     double score;
     if (sim_game->status != STATUS_OVER) {
         // rollout
-        i32 depth = 300;
+        i32 depth = 100;
         while (
             sim_game->status == STATUS_IN_PROGRESS
             && (depth-- > 0 || sim_game->turn.activation_i != 0)
@@ -364,6 +366,21 @@ void ai_mcts_backprop(Node *nodes, u32 node_i, double score, Player scored_playe
     }
 }
 
+// could go back to dpw, but picking an action must be based on minimax
+// and rollouts also should either pick via minimax or be a minimax instead.
+
+// Tree re-use would still be a massive boost. Should probably do that first.
+
+double uct(Node *nodes, u32 parent_i, u32 node_i) {
+    Node *parent = nodes + parent_i;
+    Node *node = nodes + node_i;
+    double c = 0.25; // depth 9, that seems better to me.
+    //double c = sqrt(2); // 1.4, depth 4
+    //double c = 0.5; // depth was 5
+    double child_uct = (node->total_reward / node->visits) +
+                       c * sqrt(log(parent->visits) / node->visits);
+    return child_uct;
+}
 
 void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_commands,
                    int iterations) {
@@ -379,7 +396,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
         .cap = 1024,
     };
 
-    double c = sqrt(2);
+    //double c = sqrt(2);
 
     for (int pass=0; pass < iterations; pass++) {
         u32 selected_node_i = root_i;
@@ -425,8 +442,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 uint32_t highest_uct_i = 0;
                 for (uint32_t i = 0; i < nodes[selected_node_i].num_children; i++) {
                     uint32_t child_i = nodes[selected_node_i].first_child_i + i;
-                    double child_uct = (nodes[child_i].total_reward / nodes[child_i].visits) +
-                                       c * sqrt(log(nodes[selected_node_i].visits) / nodes[child_i].visits);
+                    double child_uct = uct(nodes, selected_node_i, child_i);
                     if (child_uct > highest_uct) {
                         highest_uct = child_uct;
                         highest_uct_i = child_i;
@@ -575,6 +591,29 @@ Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, 
 
     u32 most_visits = 0;
     u32 best_child_i = 0;
+
+    // debug, how deep did it search?
+    {
+        u32 node_i = root_i;
+        u32 depth = 0;
+        while (nodes[node_i].num_children > 0) {
+            u32 most_child_visits = 0;
+            u32 most_visited_child_i = 0;
+            for (u32 i=0; i< nodes[node_i].num_children; i++) {
+                u32 child_i = nodes[node_i].first_child_i + i;
+                if (nodes[child_i].visits > most_child_visits) {
+                    most_child_visits = nodes[child_i].visits;
+                    most_visited_child_i = child_i;
+                }
+            }
+            node_i = most_visited_child_i;
+            depth++;
+        }
+        printf("depth: %u\n", depth);
+    }
+
+
+
 
     assert(nodes[root_i].num_children > 0);
     //assert(nodes[root_i].num_children == (uint32_t)num_commands);
