@@ -54,13 +54,27 @@
 // you just don't backprop it that time. or just get a sim for both branches right away during expansion
 // and then backprop that, don't try to be clever about it.
 
-
-
-
-
 // 2 things
 // there's for sure a bug with endgame states or something, because the AI is not capturing the crown.
 //
+
+
+// ok, next idea
+// progressive widening is bullshit. I'm missing so many moves that way, obvious good ones.
+// I think when we expand a node, we give every child a score based on the heiristic.
+// then we run a rollout for the node and backpropagate that value.
+// This way, during node selection we can actually have some idea of what good moves are even before
+// simulating and we won't miss obviously good stuff like killing the crown.
+// do my eval's make sense?
+// like estimate for kill a bow would be 0.5 or something right? well, it depends on how bad we're doing but you know.
+// then, maybe we sim it and lose, now we have a -1, and averages to a -0.25, well that's kinda shit.
+// sim of a random other bad move might hit a 1 and give us a 0.25, and now this bad move looks way better
+// than a guaranteed bow kill. But then of course, the idea is that you do this stuff a lot and it averages to good
+// stuff. I'm not so sure. I think I don't actually go deep enough in the tree for most of these to matter at all.
+// I'm only going like 3 steps and using 300 step rollout randomness. I gotta go like at least 100 into the depth
+// for this to really make any sense don't I?
+
+
 
 #include "tazar_ai_mcts.h"
 
@@ -328,11 +342,20 @@ double ai_mcts_rollout(Game *sim_game, CommandBuf *new_commands_buf, Player scor
 }
 
 void ai_mcts_backprop(Node *nodes, u32 node_i, double score, Player scored_player) {
-    // todo: handle chance nodes.
     while (node_i != 0) {
         if (nodes[node_i].kind == NODE_CHANCE) {
+            Node *hit_child = nodes + nodes[node_i].first_child_i;
+            Node *miss_child = hit_child + 1;
+            double hit_score = hit_child->total_reward / hit_child->visits;
+            double miss_score = miss_child->total_reward / miss_child->visits;
+            double new_score = hit_score * hit_child->probability + miss_score * miss_child->probability;
+            nodes[node_i].total_reward = new_score * nodes[node_i].visits;
+            if (nodes[node_i].scored_player == scored_player) {
+                score = new_score;
+            } else {
+                score = -new_score;
+            }
         }
-
         if (nodes[node_i].scored_player == scored_player) {
             nodes[node_i].total_reward += score;
         } else {
