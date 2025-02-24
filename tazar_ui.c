@@ -323,7 +323,7 @@ void ui_update_draw() {
                 }
                 case DIFFICULTY_HARD: {
                     ai_mcts_think(&mcts_state, game, command_buf.commands,
-                                  (int)command_buf.count, 50);
+                                  (int)command_buf.count, 10);
                     break;
                 }
                 default:

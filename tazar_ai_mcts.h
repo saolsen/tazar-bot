@@ -15,7 +15,6 @@ typedef struct {
     uint32_t parent_i;
     uint32_t first_child_i;
     uint32_t num_children;
-    uint32_t num_children_to_expand;
     uint32_t visits;
     Command command;
     VolleyResult volley_result;
