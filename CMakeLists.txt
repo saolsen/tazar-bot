@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.26)
-project(tazar_bot C)
+project(tazar_bot LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 
@@ -48,6 +48,18 @@ if (EMSCRIPTEN)
     configure_file(shell.html shell.html COPYONLY)
 endif ()
 
+#FetchContent_Declare (
+#        tracy
+#        GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+#        GIT_TAG master
+#        GIT_SHALLOW TRUE
+#        GIT_PROGRESS TRUE
+#)
+#FetchContent_MakeAvailable(tracy)
+#
+#option(TRACY_ENABLE "" ON)
+#option(TRACY_ON_DEMAND "" ON)
+
 add_executable(tazar_ui tazar_game.c tazar_ai.c tazar_ui.c tazar_ai_mcts.c)
 target_link_libraries(tazar_ui PRIVATE compile-options raylib)
-
+#target_link_libraries(tazar_ui PUBLIC TracyClient)

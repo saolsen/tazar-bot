@@ -15,12 +15,52 @@
 //   probably. Rollout policy and next child node selection are not the same thing. Think about
 //   that.
 
-// changes to game state
-// pieces on a 16x16 board
-// invalid, empty, id? What needs to be fast and what doesn't I guess is the question. Design around
-//   that.
-// if applying actions is super fast I think I can avoid cloning the game state. That would be
-// great.
+// Next ideas.
+// Chance nodes are not working that well for me. I think maybe because they don't get explored enough.
+// What I could do is eliminate them and make it an "open loop" mcts.
+// The problem here, is that the actions after the volley change based on if it hit or not.
+
+// I guess, the children of a volley are all possible action for a hit or a miss.
+// So if you hit there's maybe an extra move to where the piece was. And if you miss there are
+// extra moves for the opponent because they can still use that piece. That seems kind of hard to
+// keep track of. You don't always know the number of children anymore.
+// When you hit a node, if dpw says you can add a child, maybe then you just see if there's a command
+// for the current traversal that hasn't been added yet.
+// That makes that part easier, but what about when you're traversing and there's a nodes that don't
+// exist right now, I guess you have to make sure you don't select them. I think that would mean
+// also generating valid next commands as you traverse, which seems a lot more expensive.
+
+// Without doing that, maybe I'm still handling chance nodes badly. Their value should be a combination of
+// their children's value, not it's own thing? How do you backprop and select nodes correctly through
+// chance nodes?
+
+// I guess you backprop up the value normall for both children up to the chance, then you combine them
+// and backprop that up to the decision node. That makes sense for the first expansion, but then what
+// do you do after that? You won't select both during selection, you'll only select one. So what do
+// you do while backproping that new value?
+// Do you say it's not a full visit? Do you only take a percentage of the value, thus making it closer
+// to 0?
+
+// what is the total value / visits, it's the expected value right?
+// so for a chance node, it should be the expected value of the children weighed by their probability.
+// backprop is updating the expected values of nodes.
+
+// Maybe, you combine the new value as it comes up with the current expected value of the other branch and
+// then backprop that value the rest of the way?
+
+// so when you hit a chance node, instead of continuing with the same score, you compute a new score
+// and then continue to backprop that?
+// how does that work the first time when you don't have an expected value for the other branch, maybe
+// you just don't backprop it that time. or just get a sim for both branches right away during expansion
+// and then backprop that, don't try to be clever about it.
+
+
+
+
+
+// 2 things
+// there's for sure a bug with endgame states or something, because the AI is not capturing the crown.
+//
 
 #include "tazar_ai_mcts.h"
 
@@ -43,7 +83,6 @@ void nodes_graphviz(MCTSState *state) {
     for (i32 i=1; i<state->nodes_len-1; i++) {
         Node *node = state->nodes + i;
         if (node->parent_i != 0) {
-            char *label = node->kind == NODE_DECISION ? "decision" : node->kind == NODE_OVER ? "over" : "chance";
             char *color = node->kind == NODE_CHANCE ? "lightgreen" : node->scored_player == PLAYER_RED ? "red" : "blue";
             fprintf(fp, "%u [label= %f color=%s, style=filled]\n", i, node->total_reward/node->visits, color);
             fprintf(fp, "%u -> %u\n", node->parent_i, i);
@@ -89,7 +128,7 @@ Command rollout_policy(Game *game, Command *commands, u32 num_commands) {
     double command_values[512];
     double total_value = 0;
 
-    // Only really wanna end turn if there are no other commands.
+    // Only really want to end turn if there are no other commands.
     if (num_commands == 1) {
         return commands[0];
     }
@@ -210,6 +249,12 @@ MCTSState ai_mcts_state_init(MCTSState *prev_state, Game *game, Command *command
 
     if (prev_state->root != 0) {
         // todo: reuse the tree
+        // Need to find the new root, then copy over all it's children.
+        // All pointers to parents and children need to be updated to be valid.
+        // Then I can free the old nodes.
+        // This should give a good starting point.
+        // How does this affect some of the selection stuff? Visits will be way higher for existing
+        // stuff, is that bad? Or is that fine because of how the selection works.
         if (prev_state->nodes != NULL) {
             free(prev_state->nodes);
         }
@@ -252,6 +297,53 @@ MCTSState ai_mcts_state_init(MCTSState *prev_state, Game *game, Command *command
 
 void ai_mcts_state_cleanup(MCTSState *state) {}
 
+double ai_mcts_rollout(Game *sim_game, CommandBuf *new_commands_buf, Player scored_player) {
+    double score;
+    if (sim_game->status != STATUS_OVER) {
+        // rollout
+        i32 depth = 300;
+        while (
+            sim_game->status == STATUS_IN_PROGRESS
+            && (depth-- > 0 || sim_game->turn.activation_i != 0)
+            ) {
+            game_valid_commands(new_commands_buf, sim_game);
+            Command next_command = rollout_policy(sim_game, new_commands_buf->commands, new_commands_buf->count);
+            game_apply_command(sim_game, sim_game->turn.player, next_command, VOLLEY_ROLL);
+            }
+    }
+
+    if (sim_game->status != STATUS_OVER) {
+        if (sim_game->winner == scored_player) {
+            score = 1.0;
+        } else {
+            score = -1.0;
+        }
+    } else {
+        score = game_value_for_red(sim_game);
+        if (scored_player == PLAYER_BLUE) {
+            score = -score;
+        }
+    }
+    return score;
+}
+
+void ai_mcts_backprop(Node *nodes, u32 node_i, double score, Player scored_player) {
+    // todo: handle chance nodes.
+    while (node_i != 0) {
+        if (nodes[node_i].kind == NODE_CHANCE) {
+        }
+
+        if (nodes[node_i].scored_player == scored_player) {
+            nodes[node_i].total_reward += score;
+        } else {
+            nodes[node_i].total_reward -= score;
+        }
+        nodes[node_i].visits++;
+        node_i = nodes[node_i].parent_i;
+    }
+}
+
+
 void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_commands,
                    int iterations) {
     Node *nodes = state->nodes;
@@ -274,7 +366,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
     };
 
     double c = sqrt(2);
-    double dpw_k = 1.0; // 1
+    double dpw_k = 2.0; // 1
     double dpw_alpha = 0.5; // 0.5, 0.25 looked good too
 
     for (int pass=0; pass < iterations; pass++) {
@@ -336,11 +428,13 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             assert(0);
         }
 
-        u32 nodes_to_simulate[2] = {selected_node_i, 0};
-        Game simulate_games[2] = {selected_node_game, selected_node_game};
-
-        // Expand Child.
-        if (nodes[selected_node_i].kind != NODE_OVER) {
+        if (nodes[selected_node_i].kind == NODE_OVER) {
+            assert(selected_node_game.winner != PLAYER_NONE);
+            double score = 1.0;
+            Player scored_player = selected_node_game.winner;
+            nodes[selected_node_i].visits++;
+            ai_mcts_backprop(nodes, nodes[selected_node_i].parent_i, score, scored_player);
+        } else {
             assert(nodes[selected_node_i].num_children_to_expand > 0);
 
             // If this is the first child, allocate space in the buffer.
@@ -348,7 +442,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 nodes[selected_node_i].first_child_i = (u32)nodes_len;
                 extend_nodes(&nodes, &nodes_len, &nodes_cap, nodes[selected_node_i].num_children_to_expand);
 
-                // debuging, set them to 0
+                // debugging, set them to 0
                 for (u32 i = 0; i < nodes[selected_node_i].num_children_to_expand; i++) {
                     nodes[nodes[selected_node_i].first_child_i + i] = (Node) {
                         .kind = NODE_NONE,
@@ -403,134 +497,116 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 extend_nodes(&nodes, &nodes_len, &nodes_cap, 2);
                 assert(nodes_len == miss_child_i + 1);
 
+                Game hit_game = selected_node_game;
+                Game miss_game = selected_node_game;
+
+                game_apply_command(&hit_game, scored_player, new_command, VOLLEY_HIT);
+                game_valid_commands(&new_commands_buf, &hit_game);
+                u32 num_new_hit_commands = new_commands_buf.count;
+                NodeKind hit_kind = hit_game.winner == PLAYER_NONE ? NODE_DECISION : NODE_OVER;
+                double hit_score = ai_mcts_rollout(&hit_game, &new_commands_buf, scored_player);
+
+                game_apply_command(&miss_game, scored_player, new_command, VOLLEY_MISS);
+                game_valid_commands(&new_commands_buf, &miss_game);
+                u32 num_new_miss_commands = new_commands_buf.count;
+                NodeKind miss_kind = miss_game.winner == PLAYER_NONE ? NODE_DECISION : NODE_OVER;
+                double miss_score = ai_mcts_rollout(&miss_game, &new_commands_buf, scored_player);
+
+                double chance_score = hit_score * 0.4167 + miss_score * (1.0 - 0.4167);
+
+                nodes[hit_child_i] = (Node) {
+                    .kind = hit_kind,
+                    .parent_i = next_child_i,
+                    .first_child_i = 0,
+                    .num_children = 0,
+                    .num_children_to_expand = num_new_hit_commands,
+                    .visits = 1,
+                    .command = new_command,
+                    .scored_player = scored_player,
+                    .volley_result = VOLLEY_HIT,
+                    .total_reward = hit_score,
+                    .probability = 0.4167,
+                };
+                nodes[miss_child_i] = (Node) {
+                    .kind = miss_kind,
+                    .parent_i = next_child_i,
+                    .first_child_i = 0,
+                    .num_children = 0,
+                    .num_children_to_expand = num_new_miss_commands,
+                    .visits = 1,
+                    .command = new_command,
+                    .scored_player = scored_player,
+                    .volley_result = VOLLEY_MISS,
+                    .total_reward = miss_score,
+                    .probability = 1.0 - 0.4167,
+                };
                 nodes[next_child_i] = (Node) {
                     .kind = NODE_CHANCE,
                     .parent_i = selected_node_i,
                     .first_child_i = hit_child_i,
                     .num_children = 2,
                     .num_children_to_expand = 0,
-                    .visits = 0,
+                    .visits = 1,
                     .command = new_command,
                     .scored_player = scored_player,
                     .volley_result = VOLLEY_ROLL,
-                    .total_reward = 0.0,
+                    .total_reward = chance_score,
                     .probability = 1.0,
                 };
                 nodes[selected_node_i].num_children++;
                 nodes[selected_node_i].num_children_to_expand--;
 
-                nodes_to_simulate[0] = hit_child_i;
-                nodes_to_simulate[1] = miss_child_i;
-
-                game_apply_command(&simulate_games[0], scored_player, new_command, VOLLEY_HIT);
-                game_apply_command(&simulate_games[1], scored_player, new_command, VOLLEY_MISS);
-
-                game_valid_commands(&new_commands_buf, &simulate_games[0]);
-                u32 num_new_hit_commands = new_commands_buf.count;
-                game_valid_commands(&new_commands_buf, &simulate_games[1]);
-                u32 num_new_miss_commands = new_commands_buf.count;
-
-                nodes[hit_child_i] = (Node) {
-                    .kind = simulate_games[0].winner == PLAYER_NONE ? NODE_DECISION : NODE_OVER,
-                    .parent_i = next_child_i,
-                    .first_child_i = 0,
-                    .num_children = 0,
-                    .num_children_to_expand = num_new_hit_commands,
-                    .visits = 0,
-                    .command = new_command,
-                    .scored_player = scored_player,
-                    .volley_result = VOLLEY_HIT,
-                    .total_reward = 0.0,
-                    .probability = 0.4167,
-                };
-                nodes[miss_child_i] = (Node) {
-                    .kind = simulate_games[1].winner == PLAYER_NONE ? NODE_DECISION : NODE_OVER,
-                    .parent_i = next_child_i,
-                    .first_child_i = 0,
-                    .num_children = 0,
-                    .num_children_to_expand = num_new_miss_commands,
-                    .visits = 0,
-                    .command = new_command,
-                    .scored_player = scored_player,
-                    .volley_result = VOLLEY_MISS,
-                    .total_reward = 0.0,
-                    .probability = 1.0 - 0.4167,
-                };
-
+                ai_mcts_backprop(nodes, selected_node_i, chance_score, scored_player);
             } else {
-                Player scored_player = simulate_games[0].turn.player;
-                game_apply_command(&simulate_games[0], scored_player, new_command, VOLLEY_ROLL);
-                game_valid_commands(&new_commands_buf, &simulate_games[0]);
-                u32 num_new_commands = new_commands_buf.count;
+                Player scored_player = selected_node_game.turn.player;
+                game_apply_command(&selected_node_game, scored_player, new_command, VOLLEY_ROLL);
 
-                nodes[next_child_i] = (Node) {
-                    .kind = simulate_games[0].winner == PLAYER_NONE ? NODE_DECISION : NODE_OVER,
-                    .parent_i = selected_node_i,
-                    .first_child_i = 0,
-                    .num_children = 0,
-                    .num_children_to_expand = num_new_commands,
-                    .visits = 0,
-                    .command = new_command,
-                    .scored_player = scored_player,
-                    .volley_result = VOLLEY_ROLL,
-                    .total_reward = 0.0,
-                    .probability = 1.0,
-                };
+                if (selected_node_game.status == STATUS_OVER) {
+                    assert(selected_node_game.winner == scored_player);
+                    nodes[next_child_i] = (Node) {
+                        .kind = NODE_OVER,
+                        .parent_i = selected_node_i,
+                        .first_child_i = 0,
+                        .num_children = 0,
+                        .num_children_to_expand = 0,
+                        .visits = 0,
+                        .command = new_command,
+                        .scored_player = scored_player,
+                        .volley_result = VOLLEY_ROLL,
+                        .total_reward = 1.0,
+                        .probability = 1.0,
+                    };
+                    nodes[selected_node_i].num_children++;
+                    nodes[selected_node_i].num_children_to_expand--;
 
-                nodes[selected_node_i].num_children++;
-                nodes[selected_node_i].num_children_to_expand--;
-                nodes_to_simulate[0] = next_child_i;
-                nodes_to_simulate[1] = 0;
+                    ai_mcts_backprop(nodes, selected_node_i, 1.0, scored_player);
+                } else {
+                    game_valid_commands(&new_commands_buf, &selected_node_game);
+                    u32 num_new_commands = new_commands_buf.count;
+                    NodeKind new_kind = selected_node_game.winner == PLAYER_NONE ? NODE_DECISION : NODE_OVER;
+                    double score = ai_mcts_rollout(&selected_node_game, &new_commands_buf, scored_player);
+
+                    nodes[next_child_i] = (Node) {
+                        .kind = new_kind,
+                        .parent_i = selected_node_i,
+                        .first_child_i = 0,
+                        .num_children = 0,
+                        .num_children_to_expand = num_new_commands,
+                        .visits = 1,
+                        .command = new_command,
+                        .scored_player = scored_player,
+                        .volley_result = VOLLEY_ROLL,
+                        .total_reward = score,
+                        .probability = 1.0,
+                    };
+
+                    nodes[selected_node_i].num_children++;
+                    nodes[selected_node_i].num_children_to_expand--;
+
+                    ai_mcts_backprop(nodes, selected_node_i, score, scored_player);
+                }
             }
         }
-
-        for (u32 i=0; i<2; i++) {
-            u32 sim_i = nodes_to_simulate[i];
-            if (sim_i == 0) {
-                continue;
-            }
-            Game *sim_game = simulate_games + i;
-
-            Player scored_player = nodes[sim_i].scored_player;
-            double score;
-            if (sim_game->status != STATUS_OVER) {
-                // rollout
-                i32 depth = 300;
-                while (
-                    sim_game->status == STATUS_IN_PROGRESS
-                    && (depth-- > 0 || sim_game->turn.activation_i != 0)
-                    ) {
-                    game_valid_commands(&new_commands_buf, sim_game);
-                    Command next_command = rollout_policy(sim_game, new_commands_buf.commands, new_commands_buf.count);
-                    game_apply_command(sim_game, sim_game->turn.player, next_command, VOLLEY_ROLL);
-                }
-            }
-            if (sim_game->status != STATUS_OVER) {
-                if (sim_game->winner == scored_player) {
-                    score = 1.0;
-                } else {
-                    score = -1.0;
-                }
-            } else {
-                score = game_value_for_red(sim_game);
-                if (scored_player == PLAYER_BLUE) {
-                    score = -score;
-                }
-            }
-
-            // backpropagation
-            while (sim_i != 0) {
-                if (nodes[sim_i].scored_player == scored_player) {
-                    nodes[sim_i].total_reward += score;
-                } else {
-                    nodes[sim_i].total_reward -= score;
-                }
-                nodes[sim_i].visits++;
-                sim_i = nodes[sim_i].parent_i;
-            }
-
-        }
-
     }
 
     free(new_commands);
