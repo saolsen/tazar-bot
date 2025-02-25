@@ -378,19 +378,6 @@ MCTSState ai_mcts_state_init(MCTSState *prev_state, Game *game, Command *command
         .probability = 0.0,
     };
 
-    if (prev_state->root != 0) {
-        // todo: reuse the tree
-        // Need to find the new root, then copy over all it's children.
-        // All pointers to parents and children need to be updated to be valid.
-        // Then I can free the old nodes.
-        // This should give a good starting point.
-        // How does this affect some of the selection stuff? Visits will be way higher for existing
-        // stuff, is that bad? Or is that fine because of how the selection works.
-        if (prev_state->nodes != NULL) {
-            free(prev_state->nodes);
-        }
-    }
-
     Node *nodes = NULL;
     uintptr_t nodes_len = 0;
     uintptr_t nodes_cap = 0;
@@ -425,7 +412,15 @@ MCTSState ai_mcts_state_init(MCTSState *prev_state, Game *game, Command *command
     return state;
 }
 
-void ai_mcts_state_cleanup(MCTSState *state) {}
+void ai_mcts_state_cleanup(MCTSState *state) {
+    if (state->root != 0) {
+        if (state->nodes != NULL) {
+            free(state->nodes);
+            state->nodes = NULL;
+            state->root = 0;
+        }
+    }
+}
 
 double ai_mcts_rollout(Game *sim_game, CommandBuf *new_commands_buf, Player scored_player) {
     double score;
@@ -691,7 +686,6 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
     state->nodes = nodes;
     state->nodes_len = nodes_len;
     state->nodes_cap = nodes_cap;
-    nodes_graphviz(state);
 }
 
 Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, int num_commands) {
@@ -700,29 +694,6 @@ Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, 
 
     u32 most_visits = 0;
     u32 best_child_i = 0;
-
-    // debug, how deep did it search?
-    {
-        u32 node_i = root_i;
-        u32 depth = 0;
-        while (nodes[node_i].num_children > 0) {
-            u32 most_child_visits = 0;
-            u32 most_visited_child_i = 0;
-            for (u32 i=0; i< nodes[node_i].num_children; i++) {
-                u32 child_i = nodes[node_i].first_child_i + i;
-                if (nodes[child_i].visits > most_child_visits) {
-                    most_child_visits = nodes[child_i].visits;
-                    most_visited_child_i = child_i;
-                }
-            }
-            node_i = most_visited_child_i;
-            depth++;
-        }
-        printf("depth: %u\n", depth);
-    }
-
-
-
 
     assert(nodes[root_i].num_children > 0);
     //assert(nodes[root_i].num_children == (uint32_t)num_commands);
@@ -738,3 +709,9 @@ Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, 
     return nodes[best_child_i].command;
 }
 
+
+// ok, so more ideas
+// Break ai_think into two steps, selection and expansion. Each of these should finish in a frame.
+// Expand the whole minimax tree? I'm only saving the nodes for the first layer right now, but I
+// could fully build out the whole subtree during expansion instead.
+// re-use the same nodes for each turn, that's a big one.
