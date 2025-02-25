@@ -41,7 +41,7 @@ typedef enum {
 typedef enum {
     DIFFICULTY_NONE,
     DIFFICULTY_EASY,
-    DIFFICULTY_MEDIUM,
+    //DIFFICULTY_MEDIUM,
     DIFFICULTY_HARD,
 } Difficulty;
 
@@ -127,7 +127,7 @@ void ui_update_draw() {
         // Controls
         DrawRectangleRec(control_area, RAYWHITE);
         GuiLabel((Rectangle){20, control_area.y, 100, 20}, "Bot Difficulty");
-        GuiDropdownBox((Rectangle){20, control_area.y + 20, 100, 20}, "Easy;Medium;Hard", &selected_difficulty,
+        GuiDropdownBox((Rectangle){20, control_area.y + 20, 100, 20}, "Easy;Hard", &selected_difficulty,
                        ui_state == UI_STATE_WAITING_FOR_SELECTION || ui_state == UI_STATE_WAITING_FOR_COMMAND ? 1 : 0);
 
         if (game->winner != PLAYER_NONE) {
@@ -316,14 +316,14 @@ void ui_update_draw() {
             // Think if there's still time left.
             if (ai_thinking_frames_left-- > 0) {
                 switch (difficulty) {
-                case DIFFICULTY_MEDIUM: {
-                    ai_mc_think(&mc_state, game, command_buf.commands, (int)command_buf.count,
-                                10);
-                    break;
-                }
+//                case DIFFICULTY_MEDIUM: {
+//                    ai_mc_think(&mc_state, game, command_buf.commands, (int)command_buf.count,
+//                                10);
+//                    break;
+//                }
                 case DIFFICULTY_HARD: {
                     ai_mcts_think(&mcts_state, game, command_buf.commands,
-                                  (int)command_buf.count, 10);
+                                  (int)command_buf.count, 1);
                     break;
                 }
                 default:
@@ -338,12 +338,12 @@ void ui_update_draw() {
                     chosen_ai_command = expecti_max_policy(game, command_buf.commands, command_buf.count);
                     break;
                 }
-                case DIFFICULTY_MEDIUM: {
-                    chosen_ai_command =
-                        ai_mc_select_command(&mc_state, game, command_buf.commands, (int)command_buf.count);
-                    ai_mc_state_cleanup(&mc_state);
-                    break;
-                }
+//                case DIFFICULTY_MEDIUM: {
+//                    chosen_ai_command =
+//                        ai_mc_select_command(&mc_state, game, command_buf.commands, (int)command_buf.count);
+//                    ai_mc_state_cleanup(&mc_state);
+//                    break;
+//                }
                 case DIFFICULTY_HARD: {
                     chosen_ai_command =
                         ai_mcts_select_command(&mcts_state, game, command_buf.commands, (int)command_buf.count);
@@ -388,19 +388,21 @@ void ui_update_draw() {
                 .muster_piece_kind = PIECE_NONE,
             };
 
+            Difficulty difficulties[2] = {DIFFICULTY_EASY, DIFFICULTY_HARD};
+
             // Initialize the AI state and start thinking.
-            difficulty = (Difficulty)selected_difficulty + 1;
+            difficulty = difficulties[selected_difficulty];
             switch (difficulty) {
             case DIFFICULTY_EASY: {
                 // Easy doesn't need any time to think.
                 ai_thinking_frames_left = 0;
                 break;
             }
-            case DIFFICULTY_MEDIUM: {
-                mc_state = ai_mc_state_init(game, command_buf.commands, (int)command_buf.count);
-                ai_thinking_frames_left = 60 * 5;
-                break;
-            }
+//            case DIFFICULTY_MEDIUM: {
+//                mc_state = ai_mc_state_init(game, command_buf.commands, (int)command_buf.count);
+//                ai_thinking_frames_left = 60 * 5;
+//                break;
+//            }
             case DIFFICULTY_HARD: {
                 mcts_state = ai_mcts_state_init(&mcts_state, game, command_buf.commands, (int)command_buf.count);
                 ai_thinking_frames_left = 60 * 5;

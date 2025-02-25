@@ -118,12 +118,19 @@ double game_value_for_red(Game *game) {
         }
     }
 
+//    double weights[5] = {
+//        [PIECE_NONE] = exp(0.0),
+//        [PIECE_CROWN] = exp(4.0),
+//        [PIECE_PIKE] = exp(1.0),
+//        [PIECE_HORSE] = exp(3.0),
+//        [PIECE_BOW] = exp(2.0),
+//    };
     double weights[5] = {
-        [PIECE_NONE] = exp(0.0),
-        [PIECE_CROWN] = exp(4.0),
-        [PIECE_PIKE] = exp(1.0),
-        [PIECE_HORSE] = exp(3.0),
-        [PIECE_BOW] = exp(2.0),
+        [PIECE_NONE] = 0,
+        [PIECE_CROWN] = 7,
+        [PIECE_PIKE] = 1,
+        [PIECE_HORSE] = 5,
+        [PIECE_BOW] = 3,
     };
 
     double max_score = weights[PIECE_CROWN] + 2 * weights[PIECE_HORSE] + 3 * weights[PIECE_BOW] + 5 * weights[PIECE_PIKE];
@@ -161,6 +168,12 @@ double game_value_for_red(Game *game) {
 // stop fully expanding and just allocate the nodes as I go. Doubtful I wanna do that though
 // because it's good to have all children together for cache reasons.
 
+typedef struct {
+    double value;
+    double hit_value;
+    double miss_value;
+} CommandValue;
+
 // Use minimax (expectimax because chance nodes) to select the best command.
 // Does a 4 deep search to pick the command that maximizes the value of the game.
 // If I'm gonna do a-b pruning I probably want to sort by the old policy below.
@@ -168,8 +181,12 @@ double game_value_for_red(Game *game) {
 // todo: make sure ucb uses > not >= if I do that.
 typedef struct {
     u32 best_command_i;
-    double command_values[512];
+    CommandValue command_values[512];
 } ExpectiMaxResult;
+
+// so, this plays really well, but I can only really do like 1 of these a frame.
+// that means I can't really use them for rollouts, but I could at least use them for node eval.
+// I think next step would be to take a look at doing normal mcts but with this for node eval.
 
 double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
     if (result != NULL) {
@@ -204,17 +221,21 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
             game_apply_command(&miss_game, miss_game.turn.player, commands[i], VOLLEY_MISS);
             double miss_value = expecti_max_node(NULL, miss_game, depth - 1);
             value = 0.4167 * hit_value + (1.0 - 0.4167) * miss_value;
+            if (result != NULL) {
+                result->command_values[i].value = value;
+                result->command_values[i].hit_value = hit_value;
+                result->command_values[i].miss_value = miss_value;
+            }
         } else {
             Game new_game = game;
             game_apply_command(&new_game, new_game.turn.player, commands[i], VOLLEY_ROLL);
             value = expecti_max_node(NULL, new_game, depth - 1);
+            if (result != NULL) {
+                result->command_values[i].value = value;
+            }
         }
 
-        if (result != NULL) {
-            result->command_values[i] = value;
-        }
-
-        if ((min_node && value < best_value) || (!min_node && value > best_value)) {
+        if ((min_node && value <= best_value) || (!min_node && value >= best_value)) {
             best_value = value;
             if (result != NULL) {
                 result->best_command_i = i;
@@ -538,7 +559,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 for (uint32_t i = 0; i < nodes[selected_node_i].num_children; i++) {
                     uint32_t child_i = nodes[selected_node_i].first_child_i + i;
                     double child_uct = uct(nodes, selected_node_i, child_i);
-                    if (child_uct > highest_uct) {
+                    if (child_uct >= highest_uct) {
                         highest_uct = child_uct;
                         highest_uct_i = child_i;
                     }
@@ -565,31 +586,34 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             nodes[selected_node_i].num_children = new_commands_buf.count;
             extend_nodes(&nodes, &nodes_len, &nodes_cap, new_commands_buf.count);
 
+            ExpectiMaxResult result = {0};
+
+            // 3 is the most that's actually fast enough to do in a frame.
+            // But it kinda isn't enough, because you need 4 or 5 to really get the best move.
+            double minimax_value = expecti_max_node(&result, selected_node_game, 3);
+
             for (u32 i = 0; i < new_commands_buf.count; i++) {
                 u32 child_i = nodes[selected_node_i].first_child_i + i;
                 Command child_command = new_commands_buf.commands[i];
 
+                double child_score = result.command_values[i].value;
+                double chance_score_hit = result.command_values[i].hit_value;
+                double chance_score_miss = result.command_values[i].miss_value;
+                if (scored_player == PLAYER_BLUE) {
+                    child_score = -child_score;
+                    chance_score_hit = -chance_score_hit;
+                    chance_score_miss = -chance_score_miss;
+                }
+
                 if (child_command.kind == COMMAND_VOLLEY) {
-                    u32 hit_child_i = nodes_len;
-                    u32 miss_child_i = nodes_len + 1;
+                    u32 hit_child_i = (u32)nodes_len;
+                    u32 miss_child_i = (u32)nodes_len + 1;
 
                     extend_nodes(&nodes, &nodes_len, &nodes_cap, 2);
                     assert(nodes_len == miss_child_i + 1);
 
-                    Game hit_game = selected_node_game;
-                    Game miss_game = selected_node_game;
-
-                    game_apply_command(&hit_game, scored_player, child_command, VOLLEY_HIT);
-                    NodeKind hit_kind = hit_game.winner == PLAYER_NONE ? NODE_DECISION : NODE_OVER;
-                    double hit_red_score = game_value_for_red(&hit_game);
-                    double hit_score = scored_player == PLAYER_RED ? hit_red_score : -hit_red_score;
-
-                    game_apply_command(&miss_game, scored_player, child_command, VOLLEY_MISS);
-                    NodeKind miss_kind = miss_game.winner == PLAYER_NONE ? NODE_DECISION : NODE_OVER;
-                    double miss_red_score = game_value_for_red(&miss_game);
-                    double miss_score = scored_player == PLAYER_RED ? miss_red_score : -miss_red_score;
-
-                    double chance_score = hit_score * 0.4167 + miss_score * (1.0 - 0.4167);
+                    NodeKind hit_kind = chance_score_hit <= -1 || chance_score_hit >= 1 ? NODE_OVER : NODE_DECISION;
+                    NodeKind miss_kind = chance_score_miss <= -1 || chance_score_miss >= 1 ? NODE_OVER : NODE_DECISION;
 
                     nodes[hit_child_i] = (Node) {
                         .kind = hit_kind,
@@ -600,7 +624,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                         .command = child_command,
                         .scored_player = scored_player,
                         .volley_result = VOLLEY_HIT,
-                        .total_reward = hit_score,
+                        .total_reward = chance_score_hit,
                         .probability = 0.4167,
                     };
                     nodes[miss_child_i] = (Node) {
@@ -612,7 +636,7 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                         .command = child_command,
                         .scored_player = scored_player,
                         .volley_result = VOLLEY_MISS,
-                        .total_reward = miss_score,
+                        .total_reward = chance_score_miss,
                         .probability = 1.0 - 0.4167,
                     };
                     nodes[child_i] = (Node) {
@@ -624,51 +648,41 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                         .command = child_command,
                         .scored_player = scored_player,
                         .volley_result = VOLLEY_ROLL,
-                        .total_reward = chance_score,
+                        .total_reward = child_score,
                         .probability = 1.0,
                     };
                 } else {
-                    Game child_game = selected_node_game;
-                    game_apply_command(&child_game, scored_player, child_command, VOLLEY_ROLL);
+                    NodeKind child_kind = child_score <= -1 || child_score >= 1 ? NODE_OVER : NODE_DECISION;
 
-                    if (child_game.status == STATUS_OVER) {
-                        assert(child_game.winner == scored_player);
-                        nodes[child_i] = (Node) {
-                            .kind = NODE_OVER,
-                            .parent_i = selected_node_i,
-                            .first_child_i = 0,
-                            .num_children = 0,
-                            .visits = 1,
-                            .command = child_command,
-                            .scored_player = scored_player,
-                            .volley_result = VOLLEY_ROLL,
-                            .total_reward = 1.0,
-                            .probability = 1.0,
-                        };
-                    } else {
-                        double red_score = game_value_for_red(&child_game);
-                        double score = scored_player == PLAYER_RED ? red_score : -red_score;
-
-                        nodes[child_i] = (Node) {
-                            .kind = NODE_DECISION,
-                            .parent_i = selected_node_i,
-                            .first_child_i = 0,
-                            .num_children = 0,
-                            .visits = 1,
-                            .command = child_command,
-                            .scored_player = scored_player,
-                            .volley_result = VOLLEY_ROLL,
-                            .total_reward = score,
-                            .probability = 1.0,
-                        };
-                    }
+                    nodes[child_i] = (Node) {
+                        .kind = child_kind,
+                        .parent_i = selected_node_i,
+                        .first_child_i = 0,
+                        .num_children = 0,
+                        .visits = 1,
+                        .command = child_command,
+                        .scored_player = scored_player,
+                        .volley_result = VOLLEY_ROLL,
+                        .total_reward = child_score,
+                        .probability = 1.0,
+                    };
                 }
             }
 
             // Simulate.
-            double score = ai_mcts_rollout(&selected_node_game, &new_commands_buf, scored_player);
+            double sim_score = minimax_value;
+            if (nodes[selected_node_i].scored_player == PLAYER_BLUE) {
+                sim_score = -sim_score;
+            }
+            if (sim_score > -1 || sim_score < 1) {
+                double rollout_score = ai_mcts_rollout(&selected_node_game, &new_commands_buf,
+                                            nodes[selected_node_i].scored_player);
+                sim_score = (sim_score + rollout_score) / 2;
+            }
+
             // Backprop.
-            ai_mcts_backprop(nodes, selected_node_i, score, scored_player);
+            ai_mcts_backprop(nodes, selected_node_i, sim_score,
+                             nodes[selected_node_i].scored_player);
         }
     }
 
