@@ -196,9 +196,10 @@ typedef struct {
 typedef struct {
     Game game;
     Command command;
-    size_t num_children;
+    Command children[512];
+    size_t children_count;
+    size_t children_processed;
     int depth;
-    int visited;
 } EMNode;
 
 void push_em_node(EMNode **buf, uintptr_t *count, uintptr_t *cap, EMNode n) {
@@ -251,12 +252,29 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
     push_em_node(&stack, &stack_count, &stack_cap, (EMNode){
         .game = game,
         .command = (Command){0},
+        .children_count = 0,
+        .children_processed = 0,
         .depth = depth,
-        .visited = 0,
     });
 
+    // when you hit a node.
+    // if children_count == 0, then you're either a game over, or haven't expanded children yet.
+    // if game over, return value and pop.
+    // if children_count == 0, expand children and save them, push first one.
+    // if children_count > 0 and children_processed < children_count, push next child.
+    // if children_count > 0 and children_processed == children_count, compute value and pop.
+
+    uintptr_t prev_stack_count = -1;
     while (stack_count > 0) {
-        if (stack[stack_count-1].depth == 0) {
+        uintptr_t top_i = stack_count - 1;
+        if (stack_count == prev_stack_count) {
+            printf("OH NO INFINATE LOOP");
+            break;
+        }
+        assert(stack_count != prev_stack_count);
+        prev_stack_count = stack_count;
+
+        if (stack[top_i].depth == 0 || stack[top_i].game.status == STATUS_OVER) {
             // leaf node, compute value.
             double value = game_value_for_red(&stack[stack_count - 1].game);
             push_value(&values, &values_count, &values_cap,
@@ -264,11 +282,82 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
                            .value = value,
                        });
             stack_count--;
-        } else if (stack[stack_count-1].visited) {
+        } else if (stack[top_i].children_count == 0) {
+            // First time visiting this node, expand children.
+            Command command = stack[top_i].command;
+            if (command.kind == COMMAND_VOLLEY) {
+                Game hit_game = stack[top_i].game;
+                game_apply_command(&hit_game, hit_game.turn.player, command, VOLLEY_HIT);
+
+                stack[top_i].children_count = 2;
+
+                push_em_node(&stack, &stack_count, &stack_cap, (EMNode){
+                    .game = hit_game,
+                    .command = (Command){0},
+                    .children_count = 0,
+                    .children_processed = 0,
+                    .depth = stack[top_i].depth,
+                });
+                stack[top_i].children_processed = 1;
+            } else {
+                // Apply the command.
+                game_apply_command(&stack[top_i].game, stack[top_i].game.turn.player, command, VOLLEY_ROLL);
+                game_valid_commands(&command_buf, &stack[top_i].game);
+                for (size_t i=0; i<command_buf.count; i++) {
+                    stack[top_i].children[i] = commands[i];
+                }
+                stack[top_i].children_count = command_buf.count;
+
+                // Push first child.
+                int child_depth = stack[top_i].depth - 1;
+                if (stack[top_i].children_count < 12) {
+                    child_depth++;
+                }
+                push_em_node(&stack, &stack_count, &stack_cap, (EMNode){
+                    .game = stack[top_i].game,
+                    .command = stack[top_i].children[0],
+                    .children_count = 0,
+                    .children_processed = 0,
+                    .depth = child_depth,
+                });
+                stack[top_i].children_processed = 1;
+            }
+        } else if (stack[top_i].children_processed < stack[top_i].children_count) {
+            // Push the next child.
+            if (stack[top_i].command.kind == COMMAND_VOLLEY) {
+                assert(stack[top_i].children_count == 2);
+                assert(stack[top_i].children_processed == 1);
+
+                Game miss_game = stack[top_i].game;
+                game_apply_command(&miss_game, miss_game.turn.player, stack[top_i].command, VOLLEY_MISS);
+                push_em_node(&stack, &stack_count, &stack_cap, (EMNode){
+                    .game = miss_game,
+                    .command = (Command){0},
+                    .children_count = 0,
+                    .children_processed = 0,
+                    .depth = stack[top_i].depth,
+                });
+                stack[top_i].children_processed++;
+            } else {
+                Command child_command = stack[top_i].children[stack[top_i].children_processed];
+                int child_depth = stack[top_i].depth - 1;
+                if (stack[top_i].children_count < 12) {
+                    child_depth++;
+                }
+
+                push_em_node(&stack, &stack_count, &stack_cap, (EMNode){
+                    .game = stack[top_i].game,
+                    .command = child_command,
+                    .children_count = 0,
+                    .children_processed = 0,
+                    .depth = child_depth,
+                });
+                stack[top_i].children_processed++;
+            }
+        } else if (stack[top_i].children_processed == stack[top_i].children_count) {
             // Compute own value.
-            assert(values_count >= stack[stack_count-1].num_children);
-            if (stack[stack_count-1].command.kind == COMMAND_VOLLEY) {
-                assert(stack[stack_count-1].num_children == 2);
+            if (stack[top_i].command.kind == COMMAND_VOLLEY) {
+                assert(stack[top_i].children_count == 2);
                 values_count -= 2;
                 double hit_value = values[values_count].value;
                 double miss_value = values[values_count + 1].value;
@@ -281,15 +370,15 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
                            });
                 stack_count--;
             } else {
-                bool min_node = stack[stack_count-1].game.turn.player == PLAYER_BLUE;
+                bool min_node = stack[top_i].game.turn.player == PLAYER_BLUE;
                 double best_value = min_node ? INFINITY : -INFINITY;
 
-                values_count -= stack[stack_count-1].num_children;
-                for (size_t i=0; i<stack[stack_count-1].num_children; i++) {
+                values_count -= stack[top_i].children_count;
+                for (size_t i=0; i<stack[top_i].children_count; i++) {
                     CommandValue command_value = values[values_count + i];
                     if ((min_node && command_value.value <= best_value) || (!min_node && command_value.value >= best_value)) {
                         best_value = command_value.value;
-                        if (stack[stack_count-1].depth == depth) {
+                        if (stack[top_i].depth == depth) {
                             result->best_command_i = (u32)i;
                             result->command_values[i] = command_value;
                         }
@@ -302,52 +391,18 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
                 stack_count--;
             }
         } else {
-            Command command = stack[stack_count-1].command;
-
-            if (command.kind == COMMAND_VOLLEY) {
-                Game hit_game = game;
-                game_apply_command(&hit_game, hit_game.turn.player, command, VOLLEY_HIT);
-
-                Game miss_game = game;
-                game_apply_command(&miss_game, miss_game.turn.player, command, VOLLEY_MISS);
-
-                stack[stack_count-1].num_children = 2;
-                stack[stack_count-1].visited = 1;
-
-                push_em_node(&stack, &stack_count, &stack_cap, (EMNode){
-                                                                   .game = hit_game,
-                                                                   .command = command,
-                                                                   .depth = depth,
-                                                                   .visited = 0,
-                                                               });
-                push_em_node(&stack, &stack_count, &stack_cap, (EMNode){
-                                                                   .game = miss_game,
-                                                                   .command = command,
-                                                                   .depth = depth,
-                                                                   .visited = 0,
-                                                               });
-            } else {
-                Game child_game = stack[stack_count-1].game;
-                game_apply_command(&child_game, child_game.turn.player, command, VOLLEY_ROLL);
-                game_valid_commands(&command_buf, &game);
-
-                stack[stack_count-1].num_children = command_buf.count;
-                stack[stack_count-1].visited = 1;
-
-                for (size_t i=0; i<command_buf.count; i++) {
-                    Command child_command = commands[i];
-                    push_em_node(&stack, &stack_count, &stack_cap, (EMNode){
-                                                                       .game = child_game,
-                                                                       .command = command,
-                                                                       .depth = depth - 1,
-                                                                       .visited = 0,
-                                                                   });
-                }
-            }
+            assert(0);
         }
     }
 
-    // todo: free all the memory and return the result.
+    assert(values_count == 1);
+    double score = values[0].value;
+
+    free(commands);
+    free(stack);
+    free(values);
+
+    return score;
 
 #if 0
     if (depth == 0) {
@@ -407,6 +462,7 @@ Command expecti_max_policy(Game *game, Command *commands, u32 num_commands) {
     assert(num_commands < 512);
 
     ExpectiMaxResult result = {0};
+    //expecti_max_node(&result, *game, 3);
     expecti_max_node(&result, *game, 3);
 
     return commands[result.best_command_i];
@@ -828,9 +884,9 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 sim_score = -sim_score;
             }
             if (sim_score > -1 || sim_score < 1) {
-                double rollout_score = ai_mcts_rollout(&selected_node_game, &new_commands_buf,
-                                            nodes[selected_node_i].scored_player);
-                sim_score = (sim_score + rollout_score) / 2;
+                // double rollout_score = ai_mcts_rollout(&selected_node_game, &new_commands_buf,
+                //                             nodes[selected_node_i].scored_player);
+                // sim_score = (sim_score + rollout_score) / 2;
             }
 
             // Backprop.
