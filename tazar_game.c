@@ -674,6 +674,10 @@ static size_t move_targets(CPosBuf *targets_buf, Game *game, CPos from) {
 void game_valid_commands(CommandBuf *command_buf, Game *game) {
     command_buf->count = 0;
 
+    if (game->status != STATUS_IN_PROGRESS) {
+        return;
+    }
+
     // You can always end your turn.
     if (command_buf->count < command_buf->cap) {
         command_buf->commands[command_buf->count++] = (Command){
