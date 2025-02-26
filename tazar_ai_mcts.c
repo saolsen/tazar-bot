@@ -361,6 +361,8 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
                 values_count -= 2;
                 double hit_value = values[values_count].value;
                 double miss_value = values[values_count + 1].value;
+                assert((stack[top_i].game.turn.player == PLAYER_RED && hit_value > miss_value) ||
+                       (stack[top_i].game.turn.player == PLAYER_BLUE && hit_value < miss_value));
                 double value = 0.4167 * hit_value + (1.0 - 0.4167) * miss_value;
                 push_value(&values, &values_count, &values_cap,
                            (CommandValue){
@@ -378,7 +380,7 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
                     CommandValue command_value = values[values_count + i];
                     if ((min_node && command_value.value <= best_value) || (!min_node && command_value.value >= best_value)) {
                         best_value = command_value.value;
-                        if (stack[top_i].depth == depth) {
+                        if (result != NULL && stack[top_i].depth == depth) {
                             result->best_command_i = (u32)i;
                             result->command_values[i] = command_value;
                         }
@@ -470,6 +472,8 @@ Command expecti_max_policy(Game *game, Command *commands, u32 num_commands) {
 
 // Select next command, used during node expansion and rollout.
 Command rollout_policy(Game *game, Command *commands, u32 num_commands) {
+
+
     assert(num_commands < 512);
     double command_values[512];
     double total_value = 0;
@@ -640,7 +644,7 @@ double ai_mcts_rollout(Game *sim_game, CommandBuf *new_commands_buf, Player scor
     double score;
     if (sim_game->status != STATUS_OVER) {
         // rollout
-        i32 depth = 100;
+        i32 depth = 10;
         while (
             sim_game->status == STATUS_IN_PROGRESS
             && (depth-- > 0 || sim_game->turn.activation_i != 0)
@@ -884,9 +888,10 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 sim_score = -sim_score;
             }
             if (sim_score > -1 || sim_score < 1) {
-                // double rollout_score = ai_mcts_rollout(&selected_node_game, &new_commands_buf,
-                //                             nodes[selected_node_i].scored_player);
-                // sim_score = (sim_score + rollout_score) / 2;
+                 double rollout_score = ai_mcts_rollout(&selected_node_game, &new_commands_buf,
+                                             nodes[selected_node_i].scored_player);
+                 //sim_score = rollout_score;
+                 sim_score = (sim_score + rollout_score) / 2;
             }
 
             // Backprop.
