@@ -195,6 +195,14 @@ typedef enum : u8 {
     VOLLEY_MISS,
 } VolleyResult;
 
-void game_apply_command(Game *game, Player player, Command command, VolleyResult volley_result);
+typedef struct {
+    Turn prev_turn;
+    u8 prev_pieces[2];
+    CPos prev_pieces_pos[2];
+    u8 prev_pieces_count;
+} UndoCommand;
+
+UndoCommand game_apply_command(Game *game, Player player, Command command, VolleyResult volley_result);
+void game_undo_command(Game *game, UndoCommand undo);
 
 #endif // TAZAR_GAME_H

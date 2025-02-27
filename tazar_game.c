@@ -725,19 +725,32 @@ void game_end_turn(Game *game, Player player, Command command) {
     }
 }
 
-void game_apply_command(Game *game, Player player, Command command, VolleyResult volley_result) {
+UndoCommand game_apply_command(Game *game, Player player, Command command, VolleyResult volley_result) {
+    UndoCommand undo = {
+        .prev_turn = game->turn,
+        .prev_pieces = {0, 0},
+        .prev_pieces_pos = {{0, 0, 0}, {0, 0, 0}},
+        .prev_pieces_count = 0,
+    };
+
     if (command.kind == COMMAND_NONE) {
-        return;
+        return undo;
     }
 
     if (command.kind == COMMAND_END_TURN) {
         game->turn.activation_i = 2;
         game_end_turn(game, player, command);
-        return;
+        return undo;
     }
 
     u8 *piece = game_piece(game, command.piece_pos);
     u8 *target_piece = game_piece(game, command.target_pos);
+
+    undo.prev_pieces[0] = *piece;
+    undo.prev_pieces_pos[0] = command.piece_pos;
+    undo.prev_pieces[1] = *target_piece;
+    undo.prev_pieces_pos[1] = command.target_pos;
+    undo.prev_pieces_count = 2;
 
     bool increment_activation = false;
     u8 activation_piece = game->turn.activations[game->turn.activation_i].piece;
@@ -747,12 +760,9 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
 
     OrderKind order_kind = ORDER_NONE;
 
-    CPos del_pieces[2];
-    u32 del_pieces_count = 0;
-
-    CPos move_from[2];
-    CPos move_to[2];
-    u32 move_count = 0;
+    u8 set_pieces[2];
+    CPos set_pieces_pos[2];
+    u8 set_pieces_count = 0;
 
     switch (command.kind) {
     case COMMAND_NONE: {
@@ -760,21 +770,22 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
     }
     case COMMAND_MOVE: {
         order_kind = ORDER_MOVE;
-        if (*target_piece != TILE_EMPTY) {
-            del_pieces[del_pieces_count++] = command.target_pos;
-        }
+        set_pieces[set_pieces_count] = TILE_EMPTY;
+        set_pieces_pos[set_pieces_count] = command.piece_pos;
+        set_pieces_count++;
 
         if ((*piece & PIECE_KIND_MASK) == PIECE_HORSE &&
             *target_piece != TILE_EMPTY &&
             piece_strength(*target_piece & PIECE_KIND_MASK) >= piece_strength(PIECE_HORSE)) {
 
             // Horse charge, both die.
-            del_pieces[del_pieces_count++] = command.piece_pos;
-
+            set_pieces[set_pieces_count] = TILE_EMPTY;
+            set_pieces_pos[set_pieces_count] = command.target_pos;
+            set_pieces_count++;
         } else {
-            move_from[move_count] = command.piece_pos;
-            move_to[move_count] = command.target_pos;
-            move_count++;
+            set_pieces[set_pieces_count] = *piece;
+            set_pieces_pos[set_pieces_count] = command.target_pos;
+            set_pieces_count++;
         }
         break;
     }
@@ -802,7 +813,9 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
         }
         }
         if (volley_hits) {
-            del_pieces[del_pieces_count++] = command.target_pos;
+            set_pieces[set_pieces_count] = TILE_EMPTY;
+            set_pieces_pos[set_pieces_count] = command.target_pos;
+            set_pieces_count++;
         }
         break;
     }
@@ -828,13 +841,19 @@ void game_apply_command(Game *game, Player player, Command command, VolleyResult
         game->turn.activation_i++;
     }
 
-    for (u32 i = 0; i < del_pieces_count; i++) {
-        *game_piece(game, del_pieces[i]) = TILE_EMPTY;
-    }
-    for (u32 i = 0; i < move_count; i++) {
-        *game_piece(game, move_to[i]) = *game_piece(game, move_from[i]);
-        *game_piece(game, move_from[i]) = TILE_EMPTY;
+    for (u8 i = 0; i < set_pieces_count; i++) {
+        *game_piece(game, set_pieces_pos[i]) = set_pieces[i];
     }
 
     game_end_turn(game, player, command);
+    return undo;
+}
+
+void game_undo_command(Game *game, UndoCommand undo) {
+    game->status = STATUS_IN_PROGRESS;
+    game->turn = undo.prev_turn;
+
+    for (u8 i = 0; i < undo.prev_pieces_count; i++) {
+        *game_piece(game, undo.prev_pieces_pos[i]) = undo.prev_pieces[i];
+    }
 }
