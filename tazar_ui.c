@@ -52,11 +52,11 @@ int selected_game_mode = 0;
 int selected_map = 0;
 
 // Game State
-Game *game = NULL;
+Game game = (Game){0};
 CommandBuf command_buf = {
     .commands = NULL,
     .count = 0,
-    .cap = 0,
+    .capacity = 0,
 };
 
 CPos selected_cpos = {0, 0, 0};
@@ -68,7 +68,6 @@ Command chosen_ai_command = (Command) {
     .kind = COMMAND_NONE,
     .piece_pos = {0, 0, 0},
     .target_pos = {0, 0, 0},
-    .muster_piece_kind = PIECE_NONE,
 };
 
 int ai_thinking_frames_left = 0;
@@ -107,12 +106,12 @@ void ui_update_draw() {
             GameMode game_mode = (GameMode)(selected_game_mode + 1);
             Map map = (Map)(selected_map + 1);
 
-            game_init(game, game_mode, map);
+            game_init(&game, game_mode, map);
 
             ui_state = UI_STATE_WAITING_FOR_SELECTION;
         };
     } else {
-        game_valid_commands(&command_buf, game);
+        game_valid_commands(&command_buf, &game);
         assert(command_buf.count <= 1024);
 
         Rectangle game_area = {0, 0, (float)width, (float)height - 120.0f};
@@ -130,14 +129,14 @@ void ui_update_draw() {
         GuiDropdownBox((Rectangle){20, control_area.y + 20, 100, 20}, "Easy;Hard", &selected_difficulty,
                        ui_state == UI_STATE_WAITING_FOR_SELECTION || ui_state == UI_STATE_WAITING_FOR_COMMAND ? 1 : 0);
 
-        if (game->winner != PLAYER_NONE) {
+        if (game.status == STATUS_OVER) {
             DrawText("GAME OVER", (int)(control_center.x - 60), (int)control_area.y+20, 19, BLACK);
-            if (game->winner == PLAYER_RED) {
+            if (game.winner == PLAYER_RED) {
                 DrawText("RED WINS", (int)(control_center.x - 60), (int)control_area.y + 50, 19, RED);
             } else {
                 DrawText("BLUE WINS", (int)(control_center.x - 60), (int)control_area.y + 50, 19, BLUE);
             }
-        } else if (game->turn.player == PLAYER_RED) {
+        } else if (game.turn.player == PLAYER_RED) {
             DrawText("RED's TURN", (int)(control_center.x - 60), (int)control_area.y+20, 19, RED);
         } else {
             DrawText("BLUE's TURN", (int)(control_center.x - 60), (int)control_area.y+20, 19, BLUE);
@@ -186,8 +185,8 @@ void ui_update_draw() {
                 }
                 V2 dpos = {col - screen_center.x, row - screen_center.y};
                 CPos cpos = cpos_from_v2(dpos);
-                Tile tile = *game_tile(game, cpos);
-                if (tile == TILE_NONE) {
+                u8 piece = *game_piece(&game, cpos);
+                if (piece == TILE_NULL) {
                     continue;
                 }
 
@@ -205,14 +204,14 @@ void ui_update_draw() {
 
         // Update
         if (clicked_end_turn) {
-            game_apply_command(game, game->turn.player,
+            game_apply_command(&game, game.turn.player,
                                ((Command){
                                    .kind = COMMAND_END_TURN,
                                    .piece_pos = (CPos){0, 0, 0},
                                    .target_pos = (CPos){0, 0, 0},
                                }),
                                VOLLEY_ROLL);
-            game_valid_commands(&command_buf, game);
+            game_valid_commands(&command_buf, &game);
             assert(command_buf.count <= 1024);
             ui_state = UI_STATE_WAITING_FOR_SELECTION;
             selected_cpos = (CPos){0, 0, 0};
@@ -233,39 +232,39 @@ void ui_update_draw() {
                     }
                 }
                 if (matched_command) {
-                    Piece selected_piece = *game_piece_get(game, selected_cpos);
-                    i32 selected_piece_id = selected_piece.id;
-                    assert(selected_piece_id != 0);
+                    u8 selected_piece = *game_piece(&game, selected_cpos);
+                    //i32 selected_piece_id = selected_piece.id;
+                    assert(selected_piece != 0);
 
                     // Apply the command.
-                    game_apply_command(game, game->turn.player, command, VOLLEY_ROLL);
+                    game_apply_command(&game, game.turn.player, command, VOLLEY_ROLL);
 
                     // See if the piece still exists.
                     bool piece_still_exists = false;
                     CPos new_piece_cpos = (CPos){0, 0, 0};
-                    if (game_piece_get(game, command.piece_pos)->id == selected_piece_id) {
+                    if (*game_piece(&game, command.piece_pos) == selected_piece) {
                         piece_still_exists = true;
                         new_piece_cpos = command.piece_pos;
-                    } else if (game_piece_get(game, command.target_pos)->id == selected_piece_id) {
+                    } else if (*game_piece(&game, command.target_pos) == selected_piece) {
                         piece_still_exists = true;
                         new_piece_cpos = command.target_pos;
                     }
 
                     // Get the new commands.
-                    game_valid_commands(&command_buf, game);
+                    game_valid_commands(&command_buf, &game);
                     assert(command_buf.count <= 1024);
 
                     if (command_buf.count == 1) {
                         // If there are no more commands for this player, end the turn.
                         assert(command_buf.commands[0].kind == COMMAND_END_TURN);
-                        game_apply_command(game, game->turn.player,
+                        game_apply_command(&game, game.turn.player,
                                            (Command){
                                                .kind = COMMAND_END_TURN,
                                                .piece_pos = (CPos){0, 0, 0},
                                                .target_pos = (CPos){0, 0, 0},
                                            },
                                            VOLLEY_ROLL);
-                        game_valid_commands(&command_buf, game);
+                        game_valid_commands(&command_buf, &game);
                         assert(command_buf.count <= 1024);
                         ui_state = UI_STATE_WAITING_FOR_SELECTION;
                         selected_cpos = (CPos){0, 0, 0};
@@ -297,8 +296,8 @@ void ui_update_draw() {
             }
         } else if (ui_state == UI_STATE_WAITING_FOR_SELECTION) {
             if (mouse_clicked && mouse_in_board) {
-                Piece selected_piece = *game_piece_get(game, mouse_cpos);
-                if (selected_piece.player == game->turn.player) {
+                u8 selected_piece = *game_piece(&game, mouse_cpos);
+                if ((selected_piece & PLAYER_MASK) == game.turn.player) {
                     for (size_t i = 0; i < command_buf.count; i++) {
                         Command command = command_buf.commands[i];
                         if (cpos_eq(command.piece_pos, mouse_cpos)) {
@@ -322,7 +321,7 @@ void ui_update_draw() {
 //                    break;
 //                }
                 case DIFFICULTY_HARD: {
-                    ai_mcts_think(&mcts_state, game, command_buf.commands,
+                    ai_mcts_think(&mcts_state, &game, command_buf.commands,
                                   (int)command_buf.count, 1);
                     break;
                 }
@@ -335,7 +334,7 @@ void ui_update_draw() {
             if (ai_thinking_frames_left <= 0) {
                 switch (difficulty) {
                 case DIFFICULTY_EASY: {
-                    chosen_ai_command = expecti_max_policy(game, command_buf.commands, command_buf.count);
+                    chosen_ai_command = expecti_max_policy(&game, command_buf.commands, command_buf.count);
                     break;
                 }
 //                case DIFFICULTY_MEDIUM: {
@@ -346,7 +345,7 @@ void ui_update_draw() {
 //                }
                 case DIFFICULTY_HARD: {
                     chosen_ai_command =
-                        ai_mcts_select_command(&mcts_state, game, command_buf.commands, (int)command_buf.count);
+                        ai_mcts_select_command(&mcts_state, &game, command_buf.commands, (int)command_buf.count);
                     ai_mcts_state_cleanup(&mcts_state);
                     break;
                 }
@@ -363,14 +362,14 @@ void ui_update_draw() {
         if (ui_state == UI_STATE_AI_PREVIEW) {
             if (ai_lag_frames_left-- <= 0) {
                 // Apply the command.
-                game_apply_command(game, game->turn.player, chosen_ai_command, VOLLEY_ROLL);
-                game_valid_commands(&command_buf, game);
+                game_apply_command(&game, game.turn.player, chosen_ai_command, VOLLEY_ROLL);
+                game_valid_commands(&command_buf, &game);
                 assert(command_buf.count <= 1024);
 
                 chosen_ai_command = (Command){0};
                 selected_cpos = (CPos){0, 0, 0};
 
-                if (game->status == STATUS_OVER) {
+                if (game.status == STATUS_OVER) {
                     ui_state = UI_STATE_GAME_OVER;
                 } else {
                     ui_state = UI_STATE_WAITING_FOR_SELECTION;
@@ -378,14 +377,13 @@ void ui_update_draw() {
             }
         }
 
-        if (ui_state == UI_STATE_WAITING_FOR_SELECTION && game->status != STATUS_OVER &&
-            game->turn.player == PLAYER_BLUE) {
+        if (ui_state == UI_STATE_WAITING_FOR_SELECTION && game.status != STATUS_OVER &&
+            game.turn.player == PLAYER_BLUE) {
             // It's now AI's turn.
             chosen_ai_command = (Command) {
                 .kind = COMMAND_NONE,
                 .piece_pos = {0, 0, 0},
                 .target_pos = {0, 0, 0},
-                .muster_piece_kind = PIECE_NONE,
             };
 
             Difficulty difficulties[2] = {DIFFICULTY_EASY, DIFFICULTY_HARD};
@@ -404,7 +402,7 @@ void ui_update_draw() {
 //                break;
 //            }
             case DIFFICULTY_HARD: {
-                mcts_state = ai_mcts_state_init(&mcts_state, game, command_buf.commands, (int)command_buf.count);
+                mcts_state = ai_mcts_state_init(&mcts_state, &game, command_buf.commands, (int)command_buf.count);
                 ai_thinking_frames_left = 60 * 5;
                 break;
             }
@@ -425,9 +423,8 @@ void ui_update_draw() {
 
                 V2 dpos = {col - screen_center.x, row - screen_center.y};
                 CPos cpos = cpos_from_v2(dpos);
-                Tile tile = *game_tile(game, cpos);
-                Piece piece = *game_piece_get(game, cpos);
-                if (tile == TILE_NONE) {
+                u8 piece = *game_piece(&game, cpos);
+                if (piece == TILE_NULL) {
                     continue;
                 }
 
@@ -437,64 +434,67 @@ void ui_update_draw() {
                 DrawPoly(screen_pos, 6, hex_radius, 90, LIGHTGRAY);
                 DrawPolyLines(screen_pos, 6, hex_radius, 90, BLACK);
 
-                Color color;
-                if (piece.player == PLAYER_RED) {
-                    color = RED;
-                } else if (piece.player == PLAYER_BLUE) {
-                    color = BLUE;
-                } else {
-                    color = PINK; // draw pink for invalid stuff, helps with debugging.
-                }
+                if (piece != TILE_EMPTY) {
 
-                if (ui_state == UI_STATE_WAITING_FOR_COMMAND && cpos_eq(cpos, selected_cpos)) {
-                    color = RAYWHITE;
-                } else if (ui_state == UI_STATE_AI_PREVIEW && cpos_eq(cpos, chosen_ai_command.piece_pos)) {
-                    color = RAYWHITE;
-                }
+                    Color color;
+                    if ((piece & PLAYER_MASK) == PLAYER_RED) {
+                        color = RED;
+                    } else if ((piece & PLAYER_MASK) == PLAYER_BLUE) {
+                        color = BLUE;
+                    } else {
+                        color = PINK; // draw pink for invalid stuff, helps with debugging.
+                    }
 
-                switch (piece.kind) {
-                case PIECE_CROWN: {
-                    DrawTriangle(
-                        (Vector2){screen_pos.x, screen_pos.y - hex_radius / 2},
-                        (Vector2){screen_pos.x - hex_radius / 2, screen_pos.y + hex_radius / 4},
-                        (Vector2){screen_pos.x + hex_radius / 2, screen_pos.y + hex_radius / 4},
-                        color);
-                    DrawTriangle(
-                        (Vector2){screen_pos.x - hex_radius / 2, screen_pos.y - hex_radius / 4},
-                        (Vector2){screen_pos.x, screen_pos.y + hex_radius / 2},
-                        (Vector2){screen_pos.x + hex_radius / 2, screen_pos.y - hex_radius / 4},
-                        color);
-                    break;
-                }
-                case PIECE_PIKE:
-                    DrawRectangleV(
-                        (Vector2){screen_pos.x - hex_radius / 2, screen_pos.y - hex_radius / 2},
-                        (Vector2){hex_radius, hex_radius}, color);
-                    break;
-                case PIECE_HORSE:
-                    DrawTriangle(
-                        (Vector2){screen_pos.x, screen_pos.y - hex_radius / 2},
-                        (Vector2){screen_pos.x - hex_radius / 2, screen_pos.y + hex_radius / 4},
-                        (Vector2){screen_pos.x + hex_radius / 2, screen_pos.y + hex_radius / 4},
-                        color);
-                    break;
-                case PIECE_BOW:
-                    DrawCircleV(screen_pos, hex_radius / 2, color);
-                    break;
-                default:
-                    break;
+                    if (ui_state == UI_STATE_WAITING_FOR_COMMAND && cpos_eq(cpos, selected_cpos)) {
+                        color = RAYWHITE;
+                    } else if (ui_state == UI_STATE_AI_PREVIEW &&
+                               cpos_eq(cpos, chosen_ai_command.piece_pos)) {
+                        color = RAYWHITE;
+                    }
+
+                    switch (piece & PIECE_KIND_MASK) {
+                    case PIECE_CROWN: {
+                        DrawTriangle(
+                            (Vector2){screen_pos.x, screen_pos.y - hex_radius / 2},
+                            (Vector2){screen_pos.x - hex_radius / 2, screen_pos.y + hex_radius / 4},
+                            (Vector2){screen_pos.x + hex_radius / 2, screen_pos.y + hex_radius / 4},
+                            color);
+                        DrawTriangle(
+                            (Vector2){screen_pos.x - hex_radius / 2, screen_pos.y - hex_radius / 4},
+                            (Vector2){screen_pos.x, screen_pos.y + hex_radius / 2},
+                            (Vector2){screen_pos.x + hex_radius / 2, screen_pos.y - hex_radius / 4},
+                            color);
+                        break;
+                    }
+                    case PIECE_PIKE:
+                        DrawRectangleV(
+                            (Vector2){screen_pos.x - hex_radius / 2, screen_pos.y - hex_radius / 2},
+                            (Vector2){hex_radius, hex_radius}, color);
+                        break;
+                    case PIECE_HORSE:
+                        DrawTriangle(
+                            (Vector2){screen_pos.x, screen_pos.y - hex_radius / 2},
+                            (Vector2){screen_pos.x - hex_radius / 2, screen_pos.y + hex_radius / 4},
+                            (Vector2){screen_pos.x + hex_radius / 2, screen_pos.y + hex_radius / 4},
+                            color);
+                        break;
+                    case PIECE_BOW:
+                        DrawCircleV(screen_pos, hex_radius / 2, color);
+                        break;
+                    default:
+                        break;
+                    }
                 }
             }
         }
 
         // Preview actions on hover.
         if (mouse_in_board && (ui_state == UI_STATE_WAITING_FOR_SELECTION || ui_state == UI_STATE_WAITING_FOR_COMMAND)) {
-            Tile hovered_tile = *game_tile(game, mouse_cpos);
-            Piece hovered_piece = *game_piece_get(game, mouse_cpos);
+            u8 hovered_piece = *game_piece(&game, mouse_cpos);
             if (!(ui_state == UI_STATE_WAITING_FOR_COMMAND && cpos_eq(mouse_cpos, selected_cpos))
-                && !(hovered_tile == TILE_NONE || hovered_piece.kind == PIECE_NONE)
-                && hovered_piece.player == game->turn.player) {
-                Color color = hovered_piece.player == PLAYER_RED ? MAROON : DARKBLUE;
+                && !(hovered_piece == PIECE_NULL || hovered_piece == PIECE_EMPTY)
+                && (hovered_piece & PLAYER_MASK) == game.turn.player) {
+                Color color = (hovered_piece & PLAYER_MASK) == PLAYER_RED ? MAROON : DARKBLUE;
 
                 for (size_t i = 0; i < command_buf.count; i++) {
                     Command command = command_buf.commands[i];
@@ -538,13 +538,6 @@ int main(void) {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1024, 768, "Tazar Bot");
     SetExitKey(0); // disable "ESC" closing the app.
-
-    game = game_alloc();
-    command_buf = (CommandBuf){
-        .commands = malloc(1024 * sizeof(Command)),
-        .count = 0,
-        .cap = 1024,
-    };
 
 #ifdef __EMSCRIPTEN__
     emscripten_set_main_loop(ui_update_draw, 0, 1);

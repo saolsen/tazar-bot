@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if 0
+
 // Heuristic versions of a policy and value which guide the non RL versions of the AI.
 // Returns a value in range of -46 to 46.
 double heuristic_value_old(Game *game, Player player) {
@@ -613,5 +615,7 @@ Command ai_mcts_select_command(MCTSState *state, Game *game, Command *commands, 
     Command result = nodes[best_child_i].command;
     return result;
 }
+
+#endif
 
 #endif

@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef uint8_t  u8;
 typedef uint32_t u32;
 typedef int32_t  i32;
 
@@ -52,30 +53,52 @@ CPos cpos_add(CPos a, CPos b);
 V2 v2_from_cpos(CPos cpos);
 CPos cpos_from_v2(V2 dpos);
 
-typedef enum { TILE_NONE = 0, TILE_NORMAL, TILE_HILL, TILE_MARSH } Tile;
-
-typedef enum {
-    PIECE_NONE = 0,
-    PIECE_CROWN,
-    PIECE_PIKE,
-    PIECE_HORSE,
-    PIECE_BOW,
-} PieceKind;
-
-typedef enum {
-    PLAYER_NONE = 0,
-    PLAYER_RED,
-    PLAYER_BLUE,
+typedef enum : u8 {
+    PLAYER_RED   = 0b00000000,
+    PLAYER_BLUE  = 0b00001000,
 } Player;
 
-typedef struct {
-    CPos pos;
-    PieceKind kind;
-    i32 id;
-    Player player;
-} Piece;
+#define PLAYER_MASK 0b00001000
 
-i32 piece_gold(PieceKind kind);
+typedef enum : u8 {
+    PIECE_NULL    = 0b00000000,
+    PIECE_EMPTY   = 0b00000111,
+    PIECE_PIKE    = 0b00000001,
+    PIECE_BOW     = 0b00000010,
+    PIECE_HORSE   = 0b00000011,
+    PIECE_CROWN   = 0b00000100,
+} PieceKind;
+
+#define PIECE_KIND_MASK 0b00000111
+
+typedef enum : u8 {
+    TILE_NULL       = 0b00000000,
+    TILE_EMPTY      = 0b00000111,
+    TILE_PIKE_RED   = 0b00000001,
+    TILE_PIKE_BLUE  = 0b00001001,
+    TILE_BOW_RED    = 0b00000010,
+    TILE_BOW_BLUE   = 0b00001010,
+    TILE_HORSE_RED  = 0b00000011,
+    TILE_HORSE_BLUE = 0b00001011,
+    TILE_CROWN_RED  = 0b00000100,
+    TILE_CROWN_BLUE = 0b00001100,
+
+    // 3 invalid tiles
+    TILE_INVALID_1  = 0b00000101, // red invalid piece
+    TILE_INVALID_2  = 0b00001101, // blue invalid piece
+    TILE_INVALID_3  = 0b00000110, // red invalid piece
+    TILE_INVALID_4  = 0b00001110, // blue invalid piece
+    TILE_INVALID_5  = 0b00001111, // empty but with blue player bit set.
+} TileKind;
+
+#define TILE_KIND_MASK 0b00001111
+#define PIECE_ID_MAST  0b11110000
+
+typedef struct {
+    PieceKind kind;
+    Player player;
+    u8 id;
+} Piece;
 
 typedef enum {
     ORDER_NONE = 0,
@@ -86,13 +109,13 @@ typedef enum {
 
 typedef struct {
     OrderKind kind;
-    CPos target;
+    CPos target; // todo: maybe this should be an id also.
 } Order;
 
 typedef struct {
-    i32 piece_id;
+    u8 piece;
     Order orders[2];
-    i32 order_i;
+    u8 order_i;
 } Activation;
 
 // A player's turn is broken up into activations and orders.
@@ -101,10 +124,10 @@ typedef struct {
 typedef struct {
     Player player;
     Activation activations[2];
-    i32 activation_i;
+    u8 activation_i;
 } Turn;
 
-typedef enum {
+typedef enum : u8 {
     STATUS_NONE = 0,
     STATUS_IN_PROGRESS,
     STATUS_OVER,
@@ -123,53 +146,22 @@ typedef enum {
 
 typedef struct {
     // Tiles of the board and pieces on the board.
+    // Stored in a 8x8 array.
     // Indexed by q and r but offset so that 0,0 is in the center.
-    // So 0,0,0 is in slot board[32][32]
-    // This is certainly a lot of empty space but a uniform representation
-    // like this makes it easier to pass the same shape to the (future) nn.
-    // @todo: This doesn't change. Should be a const pointer to board.
-    Tile *board;
-    i32 board_count; // always 4096
-
-    Piece pieces[64];
-    i32 pieces_count;
-
-    // The height and width of the board in double positions.
-    // Used by the UI to know how large to draw the board.
-    // @todo: Use these when scanning board and pieces so you don't have
-    //        to scan the whole thing.
-    i32 dpos_width;
-    i32 dpos_height;
-
-    GameMode game_mode;
-    Map map;
+    // So 0,0,0 is in slot board[4][4]
+    u8 board[81];
     Status status;
     Player winner;
-
-    // @note: hardcoded to 2 players
-    i32 gold[3];        // indexed by player.
-    i32 reserves[3][5]; // indexed by player and piece kind.
-
     Turn turn;
 } Game;
 
-bool game_eq(Game *a, Game *b);
-Tile *game_tile(Game *game, CPos pos);
-
-const Piece *game_piece_set(Game *game, CPos pos, Piece piece);
-const Piece *game_piece_get(Game *game, CPos pos);
-void game_piece_del(Game *game, CPos pos);
-
-Game *game_alloc();
-void game_free(Game *game);
+u8 *game_piece(Game *game, CPos pos);
 void game_init(Game *game, GameMode game_mode, Map map);
-void game_clone(Game *to, Game *from);
 
-typedef enum {
+typedef enum : u8 {
     COMMAND_NONE = 0,
     COMMAND_MOVE,
     COMMAND_VOLLEY,
-    COMMAND_MUSTER,
     COMMAND_END_TURN,
 } CommandKind;
 
@@ -185,20 +177,19 @@ typedef struct {
     CommandKind kind;
     CPos piece_pos;
     CPos target_pos;
-    PieceKind muster_piece_kind;
 } Command;
 
-bool command_eq(Command *a, Command *b);
+//bool command_eq(Command *a, Command *b);
 
 typedef struct {
     Command *commands;
     size_t count;
-    size_t cap;
+    size_t capacity;
 } CommandBuf;
 
 void game_valid_commands(CommandBuf *command_buf, Game *game);
 
-typedef enum {
+typedef enum : u8 {
     VOLLEY_ROLL,
     VOLLEY_HIT,
     VOLLEY_MISS,

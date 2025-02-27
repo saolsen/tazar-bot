@@ -125,8 +125,9 @@ double game_value_for_red(Game *game) {
 //        [PIECE_HORSE] = exp(3.0),
 //        [PIECE_BOW] = exp(2.0),
 //    };
-    double weights[5] = {
-        [PIECE_NONE] = 0,
+    double weights[] = {
+        [PIECE_NULL] = 0,
+        [PIECE_EMPTY] = 0,
         [PIECE_CROWN] = 7,
         [PIECE_PIKE] = 1,
         [PIECE_HORSE] = 5,
@@ -136,13 +137,13 @@ double game_value_for_red(Game *game) {
     double max_score = weights[PIECE_CROWN] + 2 * weights[PIECE_HORSE] + 3 * weights[PIECE_BOW] + 5 * weights[PIECE_PIKE];
     double score = 0.0;
 
-    for (u32 i=0; i<64; i++) {
-        Piece *piece = game->pieces + i;
-        if (piece->kind == PIECE_NONE) {
+    for (u32 i=0; i<81; i++) {
+        u8 piece = game->board[i];
+        if (piece == PIECE_NULL || piece == PIECE_EMPTY) {
             continue;
         }
-        double weight = weights[piece->kind];
-        if (piece->player == PLAYER_RED) {
+        double weight = weights[piece & PIECE_KIND_MASK];
+        if ((piece & PLAYER_MASK) == PLAYER_RED) {
             score += weight;
         } else {
             score -= weight;
@@ -193,6 +194,9 @@ typedef struct {
 // or, game_valid_commands should just return a malloc'd buffer instead of being passed one.
 // then on average it'll be a lot smaller.
 
+// well, game is small now, but everything is still 2 slow.
+// next try I guess will be game undo.
+
 typedef struct {
     Game game;
     Command command;
@@ -234,11 +238,10 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
         memset(result->command_values, 0, sizeof(result->command_values));
     }
 
-    Command *commands = malloc(512 * sizeof(Command));
     CommandBuf command_buf = {
-        .commands = commands,
+        .commands = NULL,
         .count = 0,
-        .cap = 512,
+        .capacity = 0,
     };
 
     EMNode *stack = NULL;
@@ -264,7 +267,7 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
     // if children_count > 0 and children_processed < children_count, push next child.
     // if children_count > 0 and children_processed == children_count, compute value and pop.
 
-    uintptr_t prev_stack_count = -1;
+    uintptr_t prev_stack_count = UINT32_MAX;
     while (stack_count > 0) {
         uintptr_t top_i = stack_count - 1;
         if (stack_count == prev_stack_count) {
@@ -304,7 +307,7 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
                 game_apply_command(&stack[top_i].game, stack[top_i].game.turn.player, command, VOLLEY_ROLL);
                 game_valid_commands(&command_buf, &stack[top_i].game);
                 for (size_t i=0; i<command_buf.count; i++) {
-                    stack[top_i].children[i] = commands[i];
+                    stack[top_i].children[i] = command_buf.commands[i];
                 }
                 stack[top_i].children_count = command_buf.count;
 
@@ -400,7 +403,6 @@ double expecti_max_node(ExpectiMaxResult *result, Game game, int depth) {
     assert(values_count == 1);
     double score = values[0].value;
 
-    free(commands);
     free(stack);
     free(values);
 
@@ -501,32 +503,32 @@ Command rollout_policy(Game *game, Command *commands, u32 num_commands) {
             break;
         }
         case COMMAND_MOVE: {
-            const Piece *source_piece = game_piece_get(game, command->piece_pos);
-            assert(source_piece->kind != PIECE_NONE);
-            const Piece *target_piece = game_piece_get(game, command->target_pos);
+            u8 source_piece = *game_piece(game, command->piece_pos);
+            assert(source_piece != PIECE_NULL && source_piece != PIECE_EMPTY);
+            u8 target_piece = *game_piece(game, command->target_pos);
 
-            if (target_piece->kind == PIECE_CROWN) {
+            if ((target_piece & PIECE_KIND_MASK) == PIECE_CROWN) {
                 command_values[i] = weights[6];
                 total_value += weights[6];
-            } else if (source_piece->kind == PIECE_HORSE) {
-                if (target_piece->kind == PIECE_PIKE || target_piece->kind == PIECE_HORSE) {
+            } else if ((source_piece & PIECE_KIND_MASK) == PIECE_HORSE) {
+                if ((target_piece & PIECE_KIND_MASK) == PIECE_PIKE || (target_piece & PIECE_KIND_MASK) == PIECE_HORSE) {
                     command_values[i] = weights[2];
                     total_value += weights[2];
-                } else if (target_piece->kind == PIECE_BOW) {
+                } else if ((target_piece & PIECE_KIND_MASK) == PIECE_BOW) {
                     command_values[i] = weights[3];
                     total_value += weights[3];
                 } else {
-                    assert(target_piece->kind == PIECE_NONE);
+                    assert((target_piece & PIECE_KIND_MASK) == PIECE_NULL);
                     command_values[i] = weights[1];
                     total_value += weights[1];
                 }
-            } else if (target_piece->kind == PIECE_HORSE) {
+            } else if ((target_piece & PIECE_KIND_MASK) == PIECE_HORSE) {
                 command_values[i] = weights[4];
                 total_value += weights[4];
-            } else if (target_piece->kind == PIECE_BOW) {
+            } else if ((target_piece & PIECE_KIND_MASK) == PIECE_BOW) {
                 command_values[i] = weights[3];
                 total_value += weights[3];
-            } else if (target_piece->kind == PIECE_NONE) {
+            } else if ((target_piece & PIECE_KIND_MASK) == PIECE_NULL) {
                 command_values[i] = weights[1];
                 total_value += weights[1];
             } else {
@@ -537,10 +539,6 @@ Command rollout_policy(Game *game, Command *commands, u32 num_commands) {
         case COMMAND_VOLLEY: {
             command_values[i] = weights[5];
             total_value += weights[5];
-            break;
-        }
-        case COMMAND_MUSTER: {
-            assert(0);
             break;
         }
         case COMMAND_END_TURN: {
@@ -588,9 +586,8 @@ MCTSState ai_mcts_state_init(MCTSState *prev_state, Game *game, Command *command
             .kind = COMMAND_NONE,
             .piece_pos = (CPos){0, 0, 0},
             .target_pos = (CPos){0, 0, 0},
-            .muster_piece_kind = PIECE_NONE,
         },
-        .scored_player = PLAYER_NONE,
+        .scored_player = game->turn.player,
         .volley_result = VOLLEY_ROLL,
         .total_reward = 0.0,
         .probability = 0.0,
@@ -612,7 +609,6 @@ MCTSState ai_mcts_state_init(MCTSState *prev_state, Game *game, Command *command
             .kind = COMMAND_NONE,
             .piece_pos = (CPos){0, 0, 0},
             .target_pos = (CPos){0, 0, 0},
-            .muster_piece_kind = PIECE_NONE,
         },
         .scored_player = game->turn.player,
         .volley_result = VOLLEY_ROLL,
@@ -718,11 +714,10 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
     uintptr_t nodes_cap = state->nodes_cap;
     uint32_t root_i = state->root;
 
-    Command *new_commands = malloc(1024 * sizeof(*new_commands));
     CommandBuf new_commands_buf = {
-        .commands = new_commands,
+        .commands = NULL,
         .count = 0,
-        .cap = 1024,
+        .capacity = 0,
     };
 
     //double c = sqrt(2);
@@ -738,7 +733,6 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
             }
 
             if (nodes[selected_node_i].kind == NODE_OVER) {
-                assert(selected_node_game.winner != PLAYER_NONE);
                 break;
             }
 
@@ -785,7 +779,6 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
         }
 
         if (nodes[selected_node_i].kind == NODE_OVER) {
-            assert(selected_node_game.winner != PLAYER_NONE);
             double score = 1.0;
             Player scored_player = selected_node_game.winner;
             ai_mcts_backprop(nodes, selected_node_i, score, scored_player);
@@ -888,10 +881,10 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                 sim_score = -sim_score;
             }
             if (sim_score > -1 || sim_score < 1) {
-                 double rollout_score = ai_mcts_rollout(&selected_node_game, &new_commands_buf,
-                                             nodes[selected_node_i].scored_player);
-                 //sim_score = rollout_score;
-                 sim_score = (sim_score + rollout_score) / 2;
+//                 double rollout_score = ai_mcts_rollout(&selected_node_game, &new_commands_buf,
+//                                             nodes[selected_node_i].scored_player);
+                 // sim_score = rollout_score;
+                 //sim_score = (sim_score + rollout_score) / 2;
             }
 
             // Backprop.
@@ -899,8 +892,6 @@ void ai_mcts_think(MCTSState *state, Game *game, Command *commands, int num_comm
                              nodes[selected_node_i].scored_player);
         }
     }
-
-    free(new_commands);
 
     state->nodes = nodes;
     state->nodes_len = nodes_len;
