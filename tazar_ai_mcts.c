@@ -196,6 +196,9 @@ typedef struct {
 
 // well, game is small now, but everything is still 2 slow.
 // next try I guess will be game undo.
+// * game undo makes copying not a problem because I don't have to.
+// * i can also track the score during game_apply_command which would
+//   mean I don't have to call that function which is also a lil slow.
 
 typedef struct {
     Game game;
