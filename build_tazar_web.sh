@@ -1,13 +1,12 @@
 #!/bin/bash
 
 emcmake cmake -S . -B cmake-web-release -DCMAKE_BUILD_TYPE=Release
-cmake --build cmake-web-release --target tazar_ui
+cmake --build cmake-web-release --target tazar_sdl_main
 pushd cmake-web-release || exit
-mv tazar_ui.html index.html
 rm -rf tazar-web
 mkdir tazar-web
-cp tazar_ui.js tazar-web/
-cp tazar_ui.wasm tazar-web/
-cp index.html tazar-web/
+cp bin/tazar-bot.js tazar-web/
+cp bin/tazar-bot.wasm tazar-web/
+cp bin/tazar-bot.html tazar-web/index.html
 zip -r tazar-web.zip tazar-web
 popd || exit
